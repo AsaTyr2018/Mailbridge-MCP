@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  <section class="panel">
+    <h2>Registration</h2>
+    <form method="post" action="/admin/registration" class="actions">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label><input type="checkbox" name="registration_enabled" {% if registration_enabled %}checked{% endif %}> Registration enabled</label>
+      <button>Save</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Users</h2>
+    <table>
+      <thead><tr><th>ID</th><th>User</th><th>Role</th><th>Status</th><th>Token</th><th>Actions</th></tr></thead>
+      <tbody>
+        {% for item in users %}
+          <tr>
+            <td>{{ item.id }}</td>
+            <td>{{ item.username }}</td>
+            <td>{% if item.is_admin %}Admin{% else %}User{% endif %}</td>
+            <td>{% if item.is_active %}Active{% else %}Locked{% endif %}</td>
+            <td><code>{{ item.mcp_token_preview }}</code></td>
+            <td class="actions">
+              {% if item.is_active %}
+                <form method="post" action="/admin/users/{{ item.id }}/lock"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Lock</button></form>
+              {% else %}
+                <form method="post" action="/admin/users/{{ item.id }}/unlock"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Unlock</button></form>
+              {% endif %}
+              <form method="post" action="/admin/users/{{ item.id }}/revoke-token"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Revoke token</button></form>
+              <form method="post" action="/admin/users/{{ item.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Delete</button></form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

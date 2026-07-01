@@ -1,0 +1,85 @@
+{% set account = account|default({}) %}
+<form method="post" action="{{ '/accounts/' ~ account.id if account.id else '/accounts' }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="grid">
+    <div>
+      <label>Name</label>
+      <input name="name" required value="{{ account.name or '' }}">
+    </div>
+    <div>
+      <label>Email address</label>
+      <input name="email_address" type="email" required value="{{ account.email_address or '' }}">
+    </div>
+    <div>
+      <label>Display name</label>
+      <input name="display_name" value="{{ account.display_name or '' }}">
+    </div>
+    <div>
+      <label>Sync folders</label>
+      <input name="sync_folders" value="{{ account.sync_folders or 'INBOX' }}">
+    </div>
+  </div>
+
+  <h3>IMAP</h3>
+  <div class="grid">
+    <div><label>Host</label><input name="imap_host" required value="{{ account.imap_host or '' }}"></div>
+    <div><label>Port</label><input name="imap_port" type="number" value="{{ account.imap_port or 993 }}"></div>
+    <div>
+      <label>TLS</label>
+      <select name="imap_tls_mode">
+        {% for mode in ["ssl", "starttls", "none"] %}
+          <option value="{{ mode }}" {% if (account.imap_tls_mode or 'ssl') == mode %}selected{% endif %}>{{ mode }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div><label>Username</label><input name="imap_username" required value="{{ account.imap_username or '' }}"></div>
+    <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="imap_password" type="password" {% if not account.id %}required{% endif %}></div>
+  </div>
+
+  <h3>SMTP</h3>
+  <div class="grid">
+    <div><label>Host</label><input name="smtp_host" required value="{{ account.smtp_host or '' }}"></div>
+    <div><label>Port</label><input name="smtp_port" type="number" value="{{ account.smtp_port or 587 }}"></div>
+    <div>
+      <label>TLS</label>
+      <select name="smtp_tls_mode">
+        {% for mode in ["starttls", "ssl", "none"] %}
+          <option value="{{ mode }}" {% if (account.smtp_tls_mode or 'starttls') == mode %}selected{% endif %}>{{ mode }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div><label>Username</label><input name="smtp_username" required value="{{ account.smtp_username or '' }}"></div>
+    <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="smtp_password" type="password" {% if not account.id %}required{% endif %}></div>
+  </div>
+
+  <h3>MCP Policy</h3>
+  <div class="checkboxes">
+    <label><input type="checkbox" name="enabled" {% if account.enabled is not defined or account.enabled %}checked{% endif %}>Enabled</label>
+    <label><input type="checkbox" name="mcp_read_enabled" {% if account.mcp_read_enabled is not defined or account.mcp_read_enabled %}checked{% endif %}>Read</label>
+    <label><input type="checkbox" name="mcp_search_enabled" {% if account.mcp_search_enabled is not defined or account.mcp_search_enabled %}checked{% endif %}>Search</label>
+    <label><input type="checkbox" name="mcp_draft_enabled" {% if account.mcp_draft_enabled is not defined or account.mcp_draft_enabled %}checked{% endif %}>Draft</label>
+    <label><input type="checkbox" name="sync_calendar_enabled" {% if account.sync_calendar_enabled %}checked{% endif %}>Calendar sync</label>
+    <label><input type="checkbox" name="mcp_calendar_enabled" {% if account.mcp_calendar_enabled %}checked{% endif %}>Calendar MCP</label>
+    <label><input type="checkbox" name="sync_contacts_enabled" {% if account.sync_contacts_enabled %}checked{% endif %}>Contact sync</label>
+    <label><input type="checkbox" name="mcp_contacts_enabled" {% if account.mcp_contacts_enabled %}checked{% endif %}>Contact MCP</label>
+  </div>
+  <div class="grid">
+    <div>
+      <label>Send mode</label>
+      <select name="mcp_send_mode">
+        {% for mode in ["disabled", "draft_only", "interactive_requires_ok", "approved_automation_only", "interactive_or_approved_automation"] %}
+          <option value="{{ mode }}" {% if (account.mcp_send_mode or 'interactive_requires_ok') == mode %}selected{% endif %}>{{ mode }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div><label>Max search results</label><input name="max_search_results" type="number" value="{{ account.max_search_results or 20 }}"></div>
+    <div><label>Max message bytes</label><input name="max_message_bytes" type="number" value="{{ account.max_message_bytes or 20000 }}"></div>
+    <div><label>Allowed recipient domains</label><input name="allowed_recipient_domains" value="{{ account.allowed_recipient_domains or '' }}"></div>
+    <div><label>Blocked recipient domains</label><input name="blocked_recipient_domains" value="{{ account.blocked_recipient_domains or '' }}"></div>
+  </div>
+
+  <div class="actions" style="margin-top: 16px;">
+    <button>Save</button>
+    <a class="button secondary" href="/">Cancel</a>
+  </div>
+</form>

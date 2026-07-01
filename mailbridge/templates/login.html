@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  <section class="panel">
+    <h2>Login</h2>
+    <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="grid">
+        <div><label>Username</label><input name="username" required autocomplete="username"></div>
+        <div><label>Password</label><input name="password" type="password" required autocomplete="current-password"></div>
+      </div>
+      <div class="actions" style="margin-top: 16px;">
+        <button>Login</button>
+        {% if registration_enabled %}<a class="button secondary" href="/register">Register</a>{% endif %}
+      </div>
+    </form>
+  </section>
+{% endblock %}

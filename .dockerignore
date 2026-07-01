@@ -1,0 +1,10 @@
+data/
+__pycache__/
+*.pyc
+.venv/
+.git/
+.env
+*.db
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

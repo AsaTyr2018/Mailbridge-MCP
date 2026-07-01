@@ -1,0 +1,17 @@
+data/
+.env
+*.db
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+*.log
+
