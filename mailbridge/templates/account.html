@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
   <section class="panel">
-    <h2>Edit Account</h2>
+    <div class="panel-header">
+      <div>
+        <h2>Edit Account</h2>
+        <div class="muted">Update mail transport, sync settings and MCP policy.</div>
+      </div>
+    </div>
     {% include "account_form.html" %}
   </section>
 {% endblock %}

@@ -1,19 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
-  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
-  <section class="panel">
-    <h2>Register{% if first_user %} Admin{% endif %}</h2>
-    <form method="post" action="/register">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="grid">
-        <div><label>Username</label><input name="username" required autocomplete="username"></div>
-        <div><label>Password</label><input name="password" type="password" required autocomplete="new-password" minlength="8"></div>
+  <div class="auth-shell">
+    {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Register{% if first_user %} Admin{% endif %}</h2>
+          <div class="muted">Create a personal user and MCP bearer token.</div>
+        </div>
       </div>
-      <div class="actions" style="margin-top: 16px;">
-        <button>Create user</button>
-        <a class="button secondary" href="/login">Back</a>
-      </div>
-    </form>
-    {% if first_user %}<p class="muted">The first registered user becomes admin.</p>{% endif %}
-  </section>
+      <form method="post" action="/register">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="grid">
+          <div><label>Username</label><input name="username" required autocomplete="username"></div>
+          <div><label>Password</label><input name="password" type="password" required autocomplete="new-password" minlength="8"></div>
+        </div>
+        <div class="actions" style="margin-top: 16px;">
+          <button>Create user</button>
+          <a class="button secondary" href="/login">Back</a>
+        </div>
+      </form>
+      {% if first_user %}<p class="muted">The first registered user becomes admin.</p>{% endif %}
+    </section>
+  </div>
 {% endblock %}

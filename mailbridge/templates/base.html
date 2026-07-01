@@ -5,30 +5,273 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Mailbridge MCP</title>
     <style>
-      :root { color-scheme: light dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      body { margin: 0; background: #f7f7f4; color: #202124; }
-      header { background: #263238; color: #fff; padding: 18px 28px; }
-      main { max-width: 1180px; margin: 0 auto; padding: 24px; }
-      h1, h2, h3 { margin: 0 0 14px; line-height: 1.2; }
-      section { margin-bottom: 28px; }
-      table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd; }
-      th, td { padding: 10px; border-bottom: 1px solid #e6e6e6; text-align: left; vertical-align: top; }
-      th { background: #eceff1; font-size: 13px; text-transform: uppercase; }
-      input, select, textarea { width: 100%; box-sizing: border-box; padding: 9px; border: 1px solid #b7b7b7; border-radius: 4px; background: #fff; color: #202124; }
-      label { display: block; font-size: 13px; font-weight: 650; margin-bottom: 4px; }
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --bg: #090a0d;
+        --surface: #101218;
+        --surface-2: #151923;
+        --surface-3: #1b202b;
+        --line: #2a3140;
+        --line-strong: #3b4658;
+        --text: #e8edf4;
+        --muted: #97a2b3;
+        --soft: #c2cad6;
+        --accent: #7aa2ff;
+        --accent-strong: #9db8ff;
+        --danger: #ff6b6b;
+        --danger-bg: #3a1518;
+        --ok: #6ee7b7;
+        --warn: #f6c177;
+        --shadow: 0 18px 40px rgba(0, 0, 0, 0.38);
+      }
+
+      * { box-sizing: border-box; }
+      html { background: var(--bg); }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(180deg, rgba(122, 162, 255, 0.06), transparent 280px),
+          var(--bg);
+        color: var(--text);
+        letter-spacing: 0;
+      }
+      header {
+        border-bottom: 1px solid var(--line);
+        background: rgba(12, 14, 19, 0.96);
+        padding: 20px 28px;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(14px);
+      }
+      header h1 {
+        margin: 0 0 4px;
+        font-size: 22px;
+        font-weight: 760;
+        letter-spacing: 0;
+      }
+      header > div {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      header nav { margin-top: 12px; }
+      main {
+        max-width: 1220px;
+        margin: 0 auto;
+        padding: 28px 24px 48px;
+      }
+      h1, h2, h3 {
+        margin: 0 0 14px;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+      h2 { font-size: 17px; font-weight: 720; color: var(--text); }
+      h3 { font-size: 14px; font-weight: 700; color: var(--soft); margin-top: 18px; }
+      section { margin-bottom: 24px; }
+      .shell { display: grid; gap: 22px; }
+      .auth-shell {
+        max-width: 760px;
+        margin: 52px auto 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--surface);
+      }
+      th, td {
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      tr:last-child td { border-bottom: 0; }
+      th {
+        background: var(--surface-2);
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 760;
+        text-transform: uppercase;
+      }
+      td { color: var(--soft); font-size: 14px; }
+      td strong { color: var(--text); }
+      .table-shell {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+      input, select, textarea {
+        width: 100%;
+        min-height: 38px;
+        padding: 9px 10px;
+        border: 1px solid var(--line-strong);
+        border-radius: 4px;
+        background: #0c0f15;
+        color: var(--text);
+        outline: none;
+      }
+      input:focus, select:focus, textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(122, 162, 255, 0.16);
+      }
+      input[type="checkbox"] {
+        min-height: auto;
+        accent-color: var(--accent);
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--muted);
+        margin-bottom: 5px;
+      }
       .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
       .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-      .panel { background: #fff; border: 1px solid #ddd; padding: 16px; }
-      .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-      button, .button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 12px; border: 1px solid #607d8b; border-radius: 4px; background: #455a64; color: #fff; text-decoration: none; cursor: pointer; }
-      button.secondary, .button.secondary { background: #fff; color: #263238; }
-      button.danger { border-color: #8a1f11; background: #b3261e; }
-      .notice { padding: 10px 12px; background: #fff8e1; border: 1px solid #f2ca52; margin-bottom: 18px; }
-      .muted { color: #5f6368; font-size: 13px; }
-      .checkboxes label { display: inline-flex; gap: 6px; align-items: center; margin-right: 12px; }
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        padding: 18px;
+        box-shadow: var(--shadow);
+      }
+      .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .panel-header h2 { margin-bottom: 4px; }
+      .metric {
+        padding: 14px;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        min-height: 88px;
+      }
+      .metric strong {
+        display: block;
+        margin-bottom: 9px;
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+      .metric span {
+        color: var(--text);
+        font-size: 18px;
+        font-weight: 760;
+      }
+      .token-box {
+        display: grid;
+        gap: 7px;
+        margin-top: 16px;
+        padding: 13px;
+        background: #0a0d13;
+        border: 1px solid var(--line);
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      button, .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 34px;
+        padding: 0 12px;
+        border: 1px solid #425178;
+        border-radius: 4px;
+        background: #1d2a44;
+        color: #edf3ff;
+        text-decoration: none;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      button:hover, .button:hover { border-color: var(--accent); background: #25365a; }
+      button.secondary, .button.secondary {
+        background: var(--surface-3);
+        color: var(--soft);
+        border-color: var(--line-strong);
+      }
+      button.secondary:hover, .button.secondary:hover { color: var(--text); border-color: var(--accent); }
+      button.danger {
+        border-color: #6e2b31;
+        background: var(--danger-bg);
+        color: #ffd9dc;
+      }
+      button.danger:hover { border-color: var(--danger); background: #4a1b20; }
+      .notice {
+        padding: 11px 13px;
+        background: #1d1a11;
+        border: 1px solid #5a4722;
+        color: #ffe0a3;
+        margin-bottom: 18px;
+      }
+      .muted { color: var(--muted); font-size: 13px; }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 0 8px;
+        border: 1px solid var(--line-strong);
+        background: var(--surface-3);
+        color: var(--soft);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .badge.ok {
+        border-color: #23594b;
+        background: #0d2823;
+        color: var(--ok);
+      }
+      .badge.warn {
+        border-color: #624923;
+        background: #2a2112;
+        color: var(--warn);
+      }
+      .badge.danger {
+        border-color: #6e2b31;
+        background: var(--danger-bg);
+        color: #ffd9dc;
+      }
+      .checkboxes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 14px;
+        margin-bottom: 14px;
+      }
+      .checkboxes label {
+        display: inline-flex;
+        gap: 7px;
+        align-items: center;
+        margin: 0;
+        color: var(--soft);
+      }
       .checkboxes input { width: auto; }
-      code { background: #eceff1; padding: 2px 5px; border-radius: 3px; }
-      @media (max-width: 760px) { .grid, .grid-3 { grid-template-columns: 1fr; } main { padding: 16px; } }
+      code {
+        display: inline-block;
+        max-width: 100%;
+        overflow-wrap: anywhere;
+        background: #0a0d13;
+        border: 1px solid var(--line);
+        color: var(--accent-strong);
+        padding: 3px 6px;
+        border-radius: 4px;
+      }
+      a { color: var(--accent-strong); }
+      form { margin: 0; }
+      @media (max-width: 860px) {
+        .grid, .grid-3 { grid-template-columns: 1fr; }
+        main { padding: 18px 14px 36px; }
+        header { padding: 16px 14px; position: static; }
+        .panel-header { display: block; }
+        .table-shell { overflow-x: auto; }
+        table { min-width: 720px; }
+      }
     </style>
   </head>
   <body>
@@ -36,7 +279,7 @@
       <h1>Mailbridge MCP</h1>
       <div>Account administration and policy surface for Codex mail automation</div>
       {% if user %}
-        <nav style="margin-top: 10px;" class="actions">
+        <nav class="actions">
           <a class="button secondary" href="/">Accounts</a>
           {% if user.is_admin %}<a class="button secondary" href="/admin">Admin</a>{% endif %}
           <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Logout {{ user.username }}</button></form>
