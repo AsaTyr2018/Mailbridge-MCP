@@ -153,6 +153,21 @@ MAILBRIDGE_SECURE_COOKIES=true
 
 Use `MAILBRIDGE_SECURE_COOKIES=true` when serving over HTTPS.
 
+## Screenshots
+WebPanel:
+<img width="1910" height="859" alt="accounts" src="https://github.com/user-attachments/assets/e782cd9d-b7f7-446f-ae93-47949dd12ead" />
+<img width="1892" height="677" alt="admin" src="https://github.com/user-attachments/assets/acea199d-c35c-406d-80ba-71f66fe4da0a" />
+<img width="1237" height="726" alt="draft_audit" src="https://github.com/user-attachments/assets/165c5c2d-10f6-4b40-a491-5f7af2e53b2d" />
+<img width="1210" height="364" alt="Policy" src="https://github.com/user-attachments/assets/60833ebf-785b-45c9-88be-6bb819a1ccdc" />
+
+Codex:
+<img width="993" height="575" alt="codex_test_1" src="https://github.com/user-attachments/assets/bbcd6206-9cef-4644-9c00-f94f267612aa" />
+<img width="985" height="480" alt="codex_test_2" src="https://github.com/user-attachments/assets/cae5df50-c2a2-41e3-ae35-4a9c738810a2" />
+<img width="1003" height="761" alt="codex_test_3" src="https://github.com/user-attachments/assets/737daaa9-138d-47c2-a818-5a3f58aa6bc7" />
+<img width="723" height="336" alt="codex_test_4" src="https://github.com/user-attachments/assets/20f8c7f7-643a-4667-be68-5f3c4a62731e" />
+<img width="443" height="239" alt="codex_test_5" src="https://github.com/user-attachments/assets/f14adbfe-29f3-40f2-af6d-2ddc21fcd5aa" />
+
+
 ## License
 
 PolyForm Noncommercial License 1.0.0. Commercial use is not permitted without a separate commercial license. See [LICENSE](LICENSE).
