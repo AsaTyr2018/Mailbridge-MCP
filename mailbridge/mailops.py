@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import imaplib
 import json
 import re
@@ -784,6 +785,17 @@ def search_mail(account_id: int, query: str, limit: int | None = None, user: dic
 
 
 def _live_message_body(account: dict[str, Any], row: dict[str, Any], max_bytes: int, user: dict[str, Any] | None = None) -> tuple[str, bool, str, str]:
+    raw = _live_message_raw(account, row, user=user)
+    msg = BytesParser(policy=policy.default).parsebytes(raw)
+    body = _message_text(msg)
+    attachment_names = _attachment_names(msg)
+    encoded = body.encode("utf-8")
+    if len(encoded) > max_bytes:
+        return encoded[:max_bytes].decode("utf-8", errors="ignore"), True, attachment_names, "live_imap_truncated"
+    return body, False, attachment_names, "live_imap"
+
+
+def _live_message_raw(account: dict[str, Any], row: dict[str, Any], user: dict[str, Any] | None = None) -> bytes:
     full_account = get_account(int(account["id"]), include_secret=True, user=user)
     if not full_account:
         raise ValueError("account not found")
@@ -797,14 +809,8 @@ def _live_message_body(account: dict[str, Any], row: dict[str, Any], max_bytes: 
             raise ValueError("message fetch failed")
         _, raw = _extract_fetch_payload(msg_data)
         if not raw:
-            raise ValueError("message body unavailable")
-        msg = BytesParser(policy=policy.default).parsebytes(raw)
-        body = _message_text(msg)
-        attachment_names = _attachment_names(msg)
-        encoded = body.encode("utf-8")
-        if len(encoded) > max_bytes:
-            return encoded[:max_bytes].decode("utf-8", errors="ignore"), True, attachment_names, "live_imap_truncated"
-        return body, False, attachment_names, "live_imap"
+            raise ValueError("message unavailable")
+        return raw
     finally:
         try:
             client.logout()
@@ -840,6 +846,87 @@ def get_message(message_id: int, user: dict[str, Any] | None = None) -> dict[str
         result["body_source"] = "local_index"
     audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="get_message", status="ok", account_id=int(row["account_id"]), target_resource=str(message_id))
     return result
+
+
+def _message_row(message_id: int) -> dict[str, Any]:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+    if not row:
+        raise ValueError("message not found")
+    return dict(row)
+
+
+def _attachment_parts(msg: EmailMessage) -> list[dict[str, Any]]:
+    parts = []
+    for part in msg.walk() if msg.is_multipart() else [msg]:
+        filename = part.get_filename()
+        disposition = str(part.get_content_disposition() or "")
+        if not filename and disposition != "attachment":
+            continue
+        payload = part.get_payload(decode=True) or b""
+        parts.append(
+            {
+                "index": len(parts),
+                "filename": filename or f"attachment-{len(parts) + 1}",
+                "content_type": part.get_content_type(),
+                "content_id": str(part.get("content-id", "")).strip("<>"),
+                "disposition": disposition or "attachment",
+                "size_bytes": len(payload),
+                "_payload": payload,
+            }
+        )
+    return parts
+
+
+def list_attachments(message_id: int, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    row = _message_row(message_id)
+    account = get_account(int(row["account_id"]), user=user)
+    if not account or not account["mcp_read_enabled"]:
+        raise ValueError("message read not allowed for account")
+    raw = _live_message_raw(account, row, user=user)
+    msg = BytesParser(policy=policy.default).parsebytes(raw)
+    attachments = []
+    for part in _attachment_parts(msg):
+        item = dict(part)
+        item.pop("_payload", None)
+        attachments.append(item)
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_attachments", status="ok", account_id=int(row["account_id"]), target_resource=str(message_id))
+    return {"message_id": message_id, "account_id": int(row["account_id"]), "attachments": attachments, "count": len(attachments)}
+
+
+def get_attachment(message_id: int, attachment_index: int = 0, filename: str = "", max_bytes: int = 1_000_000, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    row = _message_row(message_id)
+    account = get_account(int(row["account_id"]), user=user)
+    if not account or not account["mcp_read_enabled"]:
+        raise ValueError("message read not allowed for account")
+    raw = _live_message_raw(account, row, user=user)
+    msg = BytesParser(policy=policy.default).parsebytes(raw)
+    attachments = _attachment_parts(msg)
+    selected = None
+    if filename.strip():
+        for part in attachments:
+            if str(part["filename"]).lower() == filename.strip().lower():
+                selected = part
+                break
+    elif 0 <= int(attachment_index) < len(attachments):
+        selected = attachments[int(attachment_index)]
+    if not selected:
+        raise ValueError("attachment not found")
+    safe_max = max(1, min(int(max_bytes), 5_000_000))
+    payload = selected["_payload"]
+    truncated = len(payload) > safe_max
+    payload = payload[:safe_max]
+    metadata = dict(selected)
+    metadata.pop("_payload", None)
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="get_attachment", status="ok", account_id=int(row["account_id"]), target_resource=f"{message_id}:{metadata['index']}")
+    return {
+        "message_id": message_id,
+        "account_id": int(row["account_id"]),
+        "attachment": metadata,
+        "content_base64": base64.b64encode(payload).decode("ascii"),
+        "encoding": "base64",
+        "truncated": truncated,
+    }
 
 
 def move_messages(
@@ -947,6 +1034,40 @@ def create_draft(account_id: int, to_recipients: str, subject: str, body_text: s
         draft_id = int(cur.lastrowid)
     audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="create_draft", status="ok", account_id=account_id, target_resource=str(draft_id))
     return get_draft(draft_id, user=user)
+
+
+def create_forward_draft(message_id: int, to_recipients: str, note: str = "", cc_recipients: str = "", bcc_recipients: str = "", user: dict[str, Any] | None = None) -> dict[str, Any]:
+    original = get_message(message_id, user=user)
+    account_id = int(original["account_id"])
+    subject = str(original.get("subject") or "")
+    forward_subject = subject if subject.lower().startswith("fwd:") else f"Fwd: {subject}"
+    body_parts = []
+    if note.strip():
+        body_parts.append(note.strip())
+        body_parts.append("")
+    body_parts.extend(
+        [
+            "---------- Forwarded message ---------",
+            f"From: {original.get('sender', '')}",
+            f"Date: {original.get('sent_at', '')}",
+            f"Subject: {original.get('subject', '')}",
+            f"To: {original.get('recipients', '')}",
+            "",
+            str(original.get("text_body") or ""),
+        ]
+    )
+    draft = create_draft(
+        account_id,
+        to_recipients,
+        forward_subject,
+        "\n".join(body_parts),
+        cc_recipients=cc_recipients,
+        bcc_recipients=bcc_recipients,
+        in_reply_to_message_id=message_id,
+        user=user,
+    )
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="create_forward_draft", status="ok", account_id=account_id, target_resource=str(draft["id"]))
+    return draft
 
 
 def get_draft(draft_id: int, user: dict[str, Any] | None = None) -> dict[str, Any]:

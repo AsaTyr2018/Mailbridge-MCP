@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Document MCP-MASH as the companion Mail Automation Script Host add-on for user-scoped automation tokens.
+- Add MCP tools for listing/reading message attachments with size-capped base64 output.
+- Add MCP tool for creating forward drafts while keeping send policy in `send_draft`.
 
 ## 0.3.0
 

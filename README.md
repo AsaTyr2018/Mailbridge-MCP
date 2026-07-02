@@ -122,6 +122,8 @@ enabled = true
 - `get_message`
 - `get_thread`
 - `analyze_thread`
+- `list_attachments`
+- `get_attachment`
 - `search_contacts`
 - `list_calendar_events`
 - `list_sync_profiles`
@@ -133,6 +135,7 @@ enabled = true
 - `update_calendar_event`
 - `delete_calendar_event`
 - `create_draft`
+- `create_forward_draft`
 - `list_drafts`
 - `send_draft`
 - `create_automation_token`
@@ -149,6 +152,13 @@ Automation tokens are user-scoped MCP bearer tokens for personal automation clie
 The intended add-on for these tokens is [MCP-MASH](https://github.com/AsaTyr2018/MCP-MASH), a personal automation host that runs scheduled mail scripts through Mailbridge. Mailbridge still enforces the token's user, account, and permission boundaries.
 
 They are not global service tokens. Each automation token belongs to one Mailbridge user, can only see that user's allowed accounts, and carries an explicit permission list such as `list_accounts`, `sync`, `search`, `read`, `move`, `trash`, `mark_read`, `draft`, or `send`.
+
+Additional permissions are available for narrower automation:
+
+- `attachments`: list and read message attachments through `list_attachments` and `get_attachment`.
+- `forward`: create forward drafts through `create_forward_draft`.
+- `contacts` and `contacts_write`: read or create/update/delete contacts.
+- `calendar` and `calendar_write`: read or create/update/delete calendar events.
 
 Mailbridge records automation-token calls in the normal MCP security audit with the token ID and MCP client name. Clients should set a clear MCP `clientInfo.name`, for example `mcp-mash`, so audit rows distinguish autonomous automation from interactive clients such as Codex.
 

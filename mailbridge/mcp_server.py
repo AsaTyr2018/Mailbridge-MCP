@@ -10,7 +10,6 @@ from . import syncops
 from . import automation
 from .audit import audit
 from .auth_context import get_automation_token, get_mcp_user
-from .config import settings
 from .db import db
 
 
@@ -24,8 +23,19 @@ mcp = FastMCP(
     ),
     streamable_http_path="/",
     transport_security=TransportSecuritySettings(
-        allowed_hosts=list(settings.allowed_hosts),
-        allowed_origins=list(settings.allowed_origins),
+        allowed_hosts=[
+            "127.0.0.1",
+            "127.0.0.1:18082",
+            "localhost",
+            "localhost:18082",
+            "192.168.1.172",
+            "192.168.1.172:18082",
+        ],
+        allowed_origins=[
+            "http://127.0.0.1:18082",
+            "http://localhost:18082",
+            "http://192.168.1.172:18082",
+        ],
     ),
 )
 
@@ -113,6 +123,24 @@ def get_message(message_id: int) -> dict[str, Any]:
     """Read one indexed message by exact id."""
     _require("read", _message_account_id(message_id))
     return mailops.get_message(message_id, user=get_mcp_user())
+
+
+@mcp.tool()
+def list_attachments(message_id: int) -> dict[str, Any]:
+    """List attachments for one indexed message without returning attachment content."""
+    account_id = _message_account_id(message_id)
+    _require("read", account_id)
+    _require("attachments", account_id)
+    return mailops.list_attachments(message_id, user=get_mcp_user())
+
+
+@mcp.tool()
+def get_attachment(message_id: int, attachment_index: int = 0, filename: str = "", max_bytes: int = 1000000) -> dict[str, Any]:
+    """Read one attachment as base64 content with a hard size cap."""
+    account_id = _message_account_id(message_id)
+    _require("read", account_id)
+    _require("attachments", account_id)
+    return mailops.get_attachment(message_id, attachment_index=attachment_index, filename=filename, max_bytes=max_bytes, user=get_mcp_user())
 
 
 @mcp.tool()
@@ -312,6 +340,22 @@ def create_draft(
         in_reply_to_message_id,
         user=get_mcp_user(),
     )
+
+
+@mcp.tool()
+def create_forward_draft(
+    message_id: int,
+    to_recipients: str,
+    note: str = "",
+    cc_recipients: str = "",
+    bcc_recipients: str = "",
+) -> dict[str, Any]:
+    """Create a forward draft for one message. Sending still uses send_draft policy."""
+    account_id = _message_account_id(message_id)
+    _require("read", account_id)
+    _require("draft", account_id)
+    _require("forward", account_id)
+    return mailops.create_forward_draft(message_id, to_recipients, note=note, cc_recipients=cc_recipients, bcc_recipients=bcc_recipients, user=get_mcp_user())
 
 
 @mcp.tool()
