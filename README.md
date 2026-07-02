@@ -43,6 +43,15 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Automation-scoped `move_messages` support for account-local mailbox rules.
 - Gmail-style search operators such as `from:`, `to:`, `subject:`, `newer_than:`, `after:`, `has:attachment`, `filename:`, `larger:`.
 
+## Add-on: MCP-MASH
+
+[MCP-MASH](https://github.com/AsaTyr2018/MCP-MASH) is the companion **Mail Automation Script Host** for Mailbridge.
+
+Mailbridge remains the secure mail gateway: it owns users, mail accounts, encrypted IMAP/SMTP credentials, mail indexing, account-scoped permissions, send policy, and audit.
+MCP-MASH is a personal single-user MCP server that stores automation scripts, schedules, and run logs. It connects to Mailbridge with a user-scoped automation token and can only operate on the accounts and permissions granted to that token.
+
+Use MCP-MASH for autonomous local mail workflows such as mailbox rules, scheduled cleanup, account-specific reports, and future report/reply automations while keeping mail account passwords inside Mailbridge.
+
 ## Web UI
 
 The web UI provides these operational pages:
@@ -136,6 +145,8 @@ Calendar/contact tools read normalized local data from configured sync profiles.
 ## Automation Tokens
 
 Automation tokens are user-scoped MCP bearer tokens for personal automation clients such as MCP-MASH.
+
+The intended add-on for these tokens is [MCP-MASH](https://github.com/AsaTyr2018/MCP-MASH), a personal automation host that runs scheduled mail scripts through Mailbridge. Mailbridge still enforces the token's user, account, and permission boundaries.
 
 They are not global service tokens. Each automation token belongs to one Mailbridge user, can only see that user's allowed accounts, and carries an explicit permission list such as `list_accounts`, `sync`, `search`, `read`, `move`, `trash`, `mark_read`, `draft`, or `send`.
 

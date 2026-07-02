@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Document MCP-MASH as the companion Mail Automation Script Host add-on for user-scoped automation tokens.
+
 ## 0.3.0
 
 - Add user-scoped automation tokens for personal automation clients such as MCP-MASH.
