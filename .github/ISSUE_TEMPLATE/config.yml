@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: https://github.com/AsaTyr2018/Mailbridge-MCP/security/advisories/new
+    about: Report vulnerabilities privately. Do not disclose exploitable details in public issues.

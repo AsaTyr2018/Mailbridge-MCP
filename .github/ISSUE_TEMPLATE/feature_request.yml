@@ -1,0 +1,66 @@
+name: Feature request
+description: Suggest an improvement for Mailbridge MCP
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for product improvements, provider support, MCP tool changes, or privacy/security hardening ideas.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow or limitation should this solve?
+      placeholder: I want Mailbridge to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - MCP tools
+        - Mail sync/search/read
+        - Send/draft workflow
+        - Contacts/calendar
+        - Autodiscovery/provider support
+        - Privacy/GDPR/data retention
+        - Security/audit
+        - Web UI
+        - Deployment
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy and security impact
+      description: Does this store, expose, transmit, or retain more user data?
+      placeholder: |
+        Data touched:
+        Retention impact:
+        User consent/policy impact:
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: This request does not include secrets, tokens, or private mail/contact/calendar data.
+          required: true
+        - label: I checked whether this is already covered by an existing issue.
+          required: true

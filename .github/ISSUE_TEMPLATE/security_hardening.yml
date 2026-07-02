@@ -1,0 +1,56 @@
+name: Security or privacy hardening
+description: Suggest a non-sensitive security/privacy improvement
+title: "[Security]: "
+labels: ["security", "privacy", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report exploitable vulnerabilities publicly. For vulnerabilities, use GitHub private security advisories or contact the maintainer directly as described in SECURITY.md.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe the hardening idea without exploit details.
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Authentication/session security
+        - MCP bearer token security
+        - Send approval/automation consent
+        - Audit logging
+        - Data minimization/retention
+        - Provider credential handling
+        - Reverse proxy/public deployment
+        - Rate limiting/abuse prevention
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behavior
+  - type: textarea
+    id: desired
+    attributes:
+      label: Desired behavior
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risk reduction
+      description: What concrete risk would this reduce?
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Disclosure checklist
+      options:
+        - label: This is not an active vulnerability report with exploit details.
+          required: true
+        - label: I did not include secrets, tokens, private mail, contact data, calendar data, or production database dumps.
+          required: true

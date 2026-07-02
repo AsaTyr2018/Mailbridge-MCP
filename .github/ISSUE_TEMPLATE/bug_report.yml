@@ -1,0 +1,85 @@
+name: Bug report
+description: Report a reproducible Mailbridge MCP problem
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not paste passwords, MCP bearer tokens, private mail bodies, full address books, calendars, or production database dumps.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: Mail sync fails when...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Web UI
+        - MCP server/tools
+        - IMAP/SMTP
+        - CardDAV/CalDAV/ActiveSync
+        - Autodiscovery
+        - Security/audit
+        - Docker/deployment
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use synthetic data where possible.
+      placeholder: |
+        1. Create account with...
+        2. Click...
+        3. Run MCP tool...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.2.1 or commit SHA
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Deployment details without secrets.
+      placeholder: |
+        Docker Compose / reverse proxy / OS:
+        Public URL mode: localhost, LAN, or reverse proxy:
+        Mail provider: Mailcow, Gmail, Exchange, Nextcloud, other:
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Redact tokens, passwords, email bodies, private addresses, and personal data.
+      render: text
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Safety checklist
+      options:
+        - label: I removed or redacted credentials, tokens, and private mail/contact/calendar data.
+          required: true
+        - label: I searched existing issues before opening this one.
+          required: true
