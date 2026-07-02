@@ -12,7 +12,7 @@ from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
-from typing import Any
+from typing import Any, Callable
 
 from .audit import audit
 from .db import db
@@ -412,10 +412,133 @@ def _extract_fetch_payload(msg_data: list[Any]) -> tuple[str, bytes]:
                 meta = str(item[0])
             raw = item[1]
             break
+        if isinstance(item, bytes) and not meta:
+            meta = item.decode("utf-8", errors="ignore")
+        elif item is not None and not meta:
+            meta = str(item)
     return meta, raw
 
 
-def sync_account(account_id: int, *, limit: int = 100, user: dict[str, Any] | None = None) -> dict[str, Any]:
+ProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def _sync_fetch_spec(index_mode: str) -> str:
+    if index_mode == "full_text":
+        return "(RFC822 FLAGS)"
+    if index_mode == "headers":
+        return "(BODY.PEEK[HEADER] RFC822.SIZE FLAGS)"
+    return "(BODY.PEEK[HEADER.FIELDS (DATE FROM TO CC BCC SUBJECT MESSAGE-ID REFERENCES IN-REPLY-TO DELIVERED-TO)] RFC822.SIZE FLAGS)"
+
+
+def _upsert_message_rows(rows: list[tuple[Any, ...]]) -> None:
+    if not rows:
+        return
+    with db() as conn:
+        conn.executemany(
+            """
+            INSERT INTO messages (
+                account_id, folder, imap_uid, rfc822_message_id, thread_id,
+                subject, sender, recipients, cc, bcc, delivered_to, sent_at,
+                snippet, text_body, attachment_names, size_bytes, headers_json, flags
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account_id, folder, imap_uid) DO UPDATE SET
+                subject = excluded.subject,
+                sender = excluded.sender,
+                recipients = excluded.recipients,
+                cc = excluded.cc,
+                bcc = excluded.bcc,
+                delivered_to = excluded.delivered_to,
+                sent_at = excluded.sent_at,
+                snippet = excluded.snippet,
+                text_body = excluded.text_body,
+                attachment_names = excluded.attachment_names,
+                size_bytes = excluded.size_bytes,
+                headers_json = excluded.headers_json,
+                flags = excluded.flags,
+                indexed_at = CURRENT_TIMESTAMP
+            """,
+            rows,
+        )
+
+
+def _chunked(items: list[Any], size: int) -> list[list[Any]]:
+    return [items[index : index + size] for index in range(0, len(items), size)]
+
+
+def refresh_cached_flags(
+    account_id: int,
+    *,
+    user: dict[str, Any] | None = None,
+    max_messages: int | None = None,
+    progress: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    account = get_account(account_id, include_secret=True, user=user)
+    if not account:
+        raise ValueError("account not found")
+    with db() as conn:
+        limit_sql = " LIMIT ?" if max_messages else ""
+        params: list[Any] = [account_id]
+        if max_messages:
+            params.append(max(1, int(max_messages)))
+        rows = conn.execute(
+            f"""
+            SELECT id, folder, imap_uid, flags
+            FROM messages
+            WHERE account_id = ?
+            ORDER BY indexed_at DESC, id DESC
+            {limit_sql}
+            """,
+            params,
+        ).fetchall()
+    by_folder: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_folder.setdefault(str(row["folder"]), []).append(dict(row))
+    checked = 0
+    updated = 0
+    errors: list[dict[str, Any]] = []
+    client = _imap_connect(account)
+    try:
+        for folder, folder_rows in by_folder.items():
+            if progress:
+                progress({"phase": "flags", "folder": folder, "processed": checked, "updated_flags": updated, "total_estimate": len(rows)})
+            status, _ = client.select(folder, readonly=True)
+            if status != "OK":
+                errors.append({"folder": folder, "error": "folder not selectable"})
+                continue
+            for chunk in _chunked(folder_rows, 100):
+                update_rows: list[tuple[str, int]] = []
+                for row in chunk:
+                    status, msg_data = client.uid("fetch", str(row["imap_uid"]).encode("ascii"), "(FLAGS)")
+                    checked += 1
+                    if status != "OK" or not msg_data:
+                        continue
+                    fetch_meta, _raw = _extract_fetch_payload(msg_data)
+                    _size, flags_text = _parse_fetch_size_flags(fetch_meta)
+                    if flags_text != str(row.get("flags") or ""):
+                        update_rows.append((flags_text, int(row["id"])))
+                if update_rows:
+                    with db() as conn:
+                        conn.executemany("UPDATE messages SET flags = ?, indexed_at = CURRENT_TIMESTAMP WHERE id = ?", update_rows)
+                    updated += len(update_rows)
+                if progress:
+                    progress({"phase": "flags", "folder": folder, "processed": checked, "updated_flags": updated, "total_estimate": len(rows)})
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+    return {"checked": checked, "updated_flags": updated, "errors": errors}
+
+
+def sync_account(
+    account_id: int,
+    *,
+    limit: int = 100,
+    user: dict[str, Any] | None = None,
+    progress: ProgressCallback | None = None,
+    reconcile_flags: bool = True,
+    flag_reconcile_limit: int | None = None,
+) -> dict[str, Any]:
     account = get_account(account_id, include_secret=True, user=user)
     if not account:
         raise ValueError("account not found")
@@ -423,6 +546,7 @@ def sync_account(account_id: int, *, limit: int = 100, user: dict[str, Any] | No
         raise ValueError("account disabled")
     index_mode = account.get("mail_index_mode") or "metadata_only"
     indexed = 0
+    total_estimate = 0
     client = _imap_connect(account)
     try:
         folders = [folder.strip() for folder in account["sync_folders"].split(",") if folder.strip()]
@@ -434,13 +558,12 @@ def sync_account(account_id: int, *, limit: int = 100, user: dict[str, Any] | No
             if status != "OK" or not data or not data[0]:
                 continue
             uids = data[0].split()[-limit:]
+            total_estimate += len(uids)
+            if progress:
+                progress({"phase": "index", "folder": folder, "processed": indexed, "indexed": indexed, "total_estimate": total_estimate})
+            batch_rows: list[tuple[Any, ...]] = []
+            fetch_spec = _sync_fetch_spec(index_mode)
             for uid in uids:
-                if index_mode == "full_text":
-                    fetch_spec = "(RFC822 FLAGS)"
-                elif index_mode == "headers":
-                    fetch_spec = "(BODY.PEEK[HEADER] RFC822.SIZE FLAGS)"
-                else:
-                    fetch_spec = "(BODY.PEEK[HEADER.FIELDS (DATE FROM TO CC BCC SUBJECT MESSAGE-ID REFERENCES IN-REPLY-TO DELIVERED-TO)] RFC822.SIZE FLAGS)"
                 status, msg_data = client.uid("fetch", uid, fetch_spec)
                 if status != "OK" or not msg_data:
                     continue
@@ -465,59 +588,47 @@ def sync_account(account_id: int, *, limit: int = 100, user: dict[str, Any] | No
                         sent_at = str(msg.get("date"))
                 snippet = " ".join(text_body.split())[:500] if index_mode == "full_text" else ""
                 headers = {k: str(v) for k, v in msg.items()} if index_mode in {"headers", "full_text"} else {}
-                with db() as conn:
-                    conn.execute(
-                        """
-                        INSERT INTO messages (
-                            account_id, folder, imap_uid, rfc822_message_id, thread_id,
-                            subject, sender, recipients, cc, bcc, delivered_to, sent_at,
-                            snippet, text_body, attachment_names, size_bytes, headers_json, flags
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(account_id, folder, imap_uid) DO UPDATE SET
-                            subject = excluded.subject,
-                            sender = excluded.sender,
-                            recipients = excluded.recipients,
-                            cc = excluded.cc,
-                            bcc = excluded.bcc,
-                            delivered_to = excluded.delivered_to,
-                            sent_at = excluded.sent_at,
-                            snippet = excluded.snippet,
-                            text_body = excluded.text_body,
-                            attachment_names = excluded.attachment_names,
-                            size_bytes = excluded.size_bytes,
-                            headers_json = excluded.headers_json,
-                            flags = excluded.flags,
-                            indexed_at = CURRENT_TIMESTAMP
-                        """,
-                        (
-                            account_id,
-                            folder,
-                            uid.decode("ascii"),
-                            str(msg.get("message-id", "")),
-                            str(msg.get("references", msg.get("in-reply-to", msg.get("message-id", "")))),
-                            subject,
-                            sender,
-                            recipients,
-                            cc,
-                            bcc,
-                            delivered_to,
-                            sent_at,
-                            snippet,
-                            text_body,
-                            attachment_names,
-                            size_bytes or len(raw),
-                            json.dumps(headers),
-                            flags_text,
-                        ),
+                batch_rows.append(
+                    (
+                        account_id,
+                        folder,
+                        uid.decode("ascii"),
+                        str(msg.get("message-id", "")),
+                        str(msg.get("references", msg.get("in-reply-to", msg.get("message-id", "")))),
+                        subject,
+                        sender,
+                        recipients,
+                        cc,
+                        bcc,
+                        delivered_to,
+                        sent_at,
+                        snippet,
+                        text_body,
+                        attachment_names,
+                        size_bytes or len(raw),
+                        json.dumps(headers),
+                        flags_text,
                     )
+                )
                 indexed += 1
+                if len(batch_rows) >= 50:
+                    _upsert_message_rows(batch_rows)
+                    batch_rows = []
+                    if progress:
+                        progress({"phase": "index", "folder": folder, "processed": indexed, "indexed": indexed, "total_estimate": total_estimate})
+            _upsert_message_rows(batch_rows)
+            if progress:
+                progress({"phase": "index", "folder": folder, "processed": indexed, "indexed": indexed, "total_estimate": total_estimate})
+        flag_result = {"checked": 0, "updated_flags": 0, "errors": []}
+        if reconcile_flags:
+            flag_result = refresh_cached_flags(account_id, user=user, max_messages=flag_reconcile_limit, progress=progress)
         with db() as conn:
             conn.execute(
                 "UPDATE accounts SET last_sync_at = CURRENT_TIMESTAMP, last_sync_error = NULL WHERE id = ?",
                 (account_id,),
             )
         audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="sync_account", status="ok", account_id=account_id)
-        return {"ok": True, "indexed": indexed}
+        return {"ok": True, "indexed": indexed, "updated_flags": int(flag_result["updated_flags"]), "checked_flags": int(flag_result["checked"])}
     except Exception as exc:
         with db() as conn:
             conn.execute(
@@ -714,11 +825,11 @@ def _parse_search_query(query: str) -> tuple[str, list[str], list[Any]]:
     )
     remove(
         r"\bis:(unread|read|starred|important|muted)\b",
-        lambda match: where.append("m.flags NOT LIKE '%\\\\Seen%'")
+        lambda match: (where.append("instr(m.flags, ?) = 0"), params.append("\\Seen"))
         if match.group(1).lower() == "unread"
-        else where.append("m.flags LIKE '%\\\\Seen%'")
+        else (where.append("instr(m.flags, ?) > 0"), params.append("\\Seen"))
         if match.group(1).lower() == "read"
-        else where.append("m.flags LIKE '%\\\\Flagged%'")
+        else (where.append("instr(m.flags, ?) > 0"), params.append("\\Flagged"))
         if match.group(1).lower() == "starred"
         else where.append("lower(m.flags) LIKE '%important%'")
         if match.group(1).lower() == "important"
@@ -783,6 +894,55 @@ def search_mail(account_id: int, query: str, limit: int | None = None, user: dic
         ).fetchall()
     audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_mail", status="ok", account_id=account_id)
     return [dict(row) for row in rows]
+
+
+def flush_mail_cache(*, user: dict[str, Any] | None = None, all_users: bool = False) -> dict[str, Any]:
+    if all_users and (not user or not user.get("is_admin")):
+        raise PermissionError("admin required")
+    with db() as conn:
+        if all_users:
+            count = conn.execute("SELECT COUNT(*) AS c FROM messages").fetchone()["c"]
+            conn.execute("DELETE FROM messages")
+            conn.execute("UPDATE accounts SET last_sync_at = NULL, last_sync_error = NULL")
+            account_count = conn.execute("SELECT COUNT(*) AS c FROM accounts").fetchone()["c"]
+        else:
+            if not user:
+                raise ValueError("user required")
+            count = conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM messages m
+                JOIN accounts a ON a.id = m.account_id
+                WHERE a.owner_user_id = ?
+                """,
+                (int(user["id"]),),
+            ).fetchone()["c"]
+            conn.execute(
+                """
+                DELETE FROM messages
+                WHERE account_id IN (SELECT id FROM accounts WHERE owner_user_id = ?)
+                """,
+                (int(user["id"]),),
+            )
+            conn.execute(
+                """
+                UPDATE accounts
+                SET last_sync_at = NULL, last_sync_error = NULL
+                WHERE owner_user_id = ?
+                """,
+                (int(user["id"]),),
+            )
+            account_count = conn.execute("SELECT COUNT(*) AS c FROM accounts WHERE owner_user_id = ?", (int(user["id"]),)).fetchone()["c"]
+    audit(
+        actor_type="human",
+        actor_id=str(user["id"] if user else "admin"),
+        interface="http",
+        action="flush_mail_cache_all" if all_users else "flush_mail_cache",
+        status="ok",
+        target_resource="all" if all_users else f"user:{user['id'] if user else ''}",
+        policy_decision=f"deleted_messages:{count}",
+    )
+    return {"ok": True, "deleted_messages": int(count), "affected_accounts": int(account_count), "scope": "all" if all_users else "user"}
 
 
 def _live_message_body(account: dict[str, Any], row: dict[str, Any], max_bytes: int, user: dict[str, Any] | None = None) -> tuple[str, bool, str, str]:
@@ -1041,6 +1201,216 @@ def move_messages(
         "skipped": skipped,
         "errors": errors,
     }
+
+
+def _local_message_rows(
+    account_id: int,
+    message_ids: list[int],
+    *,
+    source_folder: str = "",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    safe_ids = sorted({int(message_id) for message_id in message_ids if int(message_id) > 0})
+    if not safe_ids:
+        return [], []
+    placeholders = ",".join("?" for _ in safe_ids)
+    params: list[Any] = [account_id, *safe_ids]
+    where = f"account_id = ? AND id IN ({placeholders})"
+    if source_folder.strip():
+        where += " AND lower(folder) = ?"
+        params.append(source_folder.strip().lower())
+    with db() as conn:
+        rows = conn.execute(f"SELECT * FROM messages WHERE {where}", params).fetchall()
+    found = [dict(row) for row in rows]
+    found_ids = {int(row["id"]) for row in found}
+    skipped = [{"message_id": message_id, "reason": "not found or source folder mismatch"} for message_id in safe_ids if message_id not in found_ids]
+    return found, skipped
+
+
+def _messages_by_folder(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    by_folder: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_folder.setdefault(str(row["folder"]), []).append(row)
+    return by_folder
+
+
+def mark_messages(
+    account_id: int,
+    message_ids: list[int],
+    *,
+    read: bool,
+    source_folder: str = "",
+    user: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    account = get_account(account_id, include_secret=True, user=user)
+    if not account:
+        raise ValueError("account not found")
+    rows, skipped = _local_message_rows(account_id, message_ids, source_folder=source_folder)
+    changed: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    client = _imap_connect(account)
+    try:
+        for folder, folder_rows in _messages_by_folder(rows).items():
+            status, _ = client.select(folder, readonly=False)
+            if status != "OK":
+                errors.extend({"message_id": int(row["id"]), "error": f"folder not selectable: {folder}"} for row in folder_rows)
+                continue
+            operation = "+FLAGS.SILENT" if read else "-FLAGS.SILENT"
+            for row in folder_rows:
+                message_id = int(row["id"])
+                try:
+                    status, _ = client.uid("STORE", str(row["imap_uid"]).encode("ascii"), operation, r"(\Seen)")
+                    if status != "OK":
+                        raise ValueError("IMAP flag update failed")
+                    flags = str(row.get("flags") or "")
+                    has_seen = "\\Seen" in flags or "Seen" in flags
+                    if read and not has_seen:
+                        flags = (flags + " \\Seen").strip()
+                    elif not read:
+                        flags = re.sub(r"\\?Seen", "", flags, flags=re.IGNORECASE).strip()
+                    with db() as conn:
+                        conn.execute("UPDATE messages SET flags = ?, indexed_at = CURRENT_TIMESTAMP WHERE id = ?", (flags, message_id))
+                    changed.append({"message_id": message_id, "folder": folder, "read": read})
+                except Exception as exc:
+                    errors.append({"message_id": message_id, "error": str(exc)})
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+    status = "ok" if not errors else "partial"
+    audit(
+        actor_type="mcp_client",
+        actor_id=str(user["id"] if user else "codex"),
+        interface="mcp",
+        action="mark_messages",
+        status=status,
+        account_id=account_id,
+        target_resource=",".join(str(item["message_id"]) for item in changed),
+        policy_decision="read" if read else "unread",
+        error_message=json.dumps(errors)[:500] if errors else "",
+    )
+    return {"ok": not errors, "status": status, "account_id": account_id, "read": read, "changed": changed, "skipped": skipped, "errors": errors}
+
+
+def trash_messages(
+    account_id: int,
+    message_ids: list[int],
+    *,
+    trash_folder: str = "Trash",
+    source_folder: str = "",
+    user: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return move_messages(account_id, message_ids, trash_folder or "Trash", source_folder=source_folder, user=user)
+
+
+def add_label_to_messages(
+    account_id: int,
+    message_ids: list[int],
+    label: str,
+    *,
+    source_folder: str = "",
+    user: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    account = get_account(account_id, include_secret=True, user=user)
+    if not account:
+        raise ValueError("account not found")
+    label = label.strip()
+    if not label:
+        raise ValueError("label is required")
+    rows, skipped = _local_message_rows(account_id, message_ids, source_folder=source_folder)
+    copied: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    client = _imap_connect(account)
+    try:
+        try:
+            client.create(label)
+        except Exception:
+            pass
+        for folder, folder_rows in _messages_by_folder(rows).items():
+            status, _ = client.select(folder, readonly=False)
+            if status != "OK":
+                errors.extend({"message_id": int(row["id"]), "error": f"folder not selectable: {folder}"} for row in folder_rows)
+                continue
+            for row in folder_rows:
+                message_id = int(row["id"])
+                try:
+                    status, _ = client.uid("COPY", str(row["imap_uid"]).encode("ascii"), label)
+                    if status != "OK":
+                        raise ValueError("IMAP copy failed")
+                    copied.append({"message_id": message_id, "from": folder, "label": label, "subject": row.get("subject", "")})
+                except Exception as exc:
+                    errors.append({"message_id": message_id, "error": str(exc)})
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+    status = "ok" if not errors else "partial"
+    audit(
+        actor_type="mcp_client",
+        actor_id=str(user["id"] if user else "codex"),
+        interface="mcp",
+        action="add_label",
+        status=status,
+        account_id=account_id,
+        target_resource=label,
+        error_message=json.dumps(errors)[:500] if errors else "",
+    )
+    return {"ok": not errors, "status": status, "account_id": account_id, "label": label, "copied": copied, "skipped": skipped, "errors": errors}
+
+
+def remove_label_from_messages(
+    account_id: int,
+    message_ids: list[int],
+    label: str,
+    *,
+    user: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    label = label.strip()
+    if not label:
+        raise ValueError("label is required")
+    rows, skipped = _local_message_rows(account_id, message_ids, source_folder=label)
+    account = get_account(account_id, include_secret=True, user=user)
+    if not account:
+        raise ValueError("account not found")
+    removed: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    client = _imap_connect(account)
+    try:
+        status, _ = client.select(label, readonly=False)
+        if status != "OK":
+            errors.extend({"message_id": int(row["id"]), "error": f"folder not selectable: {label}"} for row in rows)
+        else:
+            for row in rows:
+                message_id = int(row["id"])
+                try:
+                    status, _ = client.uid("STORE", str(row["imap_uid"]).encode("ascii"), "+FLAGS.SILENT", r"(\Deleted)")
+                    if status != "OK":
+                        raise ValueError("IMAP delete flag failed")
+                    removed.append({"message_id": message_id, "label": label, "subject": row.get("subject", "")})
+                except Exception as exc:
+                    errors.append({"message_id": message_id, "error": str(exc)})
+            if removed:
+                client.expunge()
+                with db() as conn:
+                    conn.executemany("DELETE FROM messages WHERE id = ?", [(item["message_id"],) for item in removed])
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+    status = "ok" if not errors else "partial"
+    audit(
+        actor_type="mcp_client",
+        actor_id=str(user["id"] if user else "codex"),
+        interface="mcp",
+        action="remove_label",
+        status=status,
+        account_id=account_id,
+        target_resource=label,
+        error_message=json.dumps(errors)[:500] if errors else "",
+    )
+    return {"ok": not errors, "status": status, "account_id": account_id, "label": label, "removed": removed, "skipped": skipped, "errors": errors}
 
 
 def create_draft(account_id: int, to_recipients: str, subject: str, body_text: str, cc_recipients: str = "", bcc_recipients: str = "", in_reply_to_message_id: int | None = None, user: dict[str, Any] | None = None) -> dict[str, Any]:

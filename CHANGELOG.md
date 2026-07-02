@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Add non-blocking background sync jobs with progress and cancellation.
+- Add automatic recent-mail sync every five minutes by default.
+- Add cached IMAP flag reconcile for fresher read/unread state.
+- Add user and admin mail-index cache flush controls.
+- Add MCP sync-job tools and mail mutation tools for mark, trash, and folder-backed labels.
+- Fix `is:read` and `is:unread` matching for IMAP `\Seen` flags.
+
 ## 0.3.3
 
 - Add scoped automation send consents for approved autonomous sends.

@@ -16,6 +16,8 @@ class Settings:
     allowed_hosts: tuple[str, ...]
     allowed_origins: tuple[str, ...]
     secure_cookies: bool
+    auto_sync_interval_seconds: int
+    auto_sync_limit: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -40,6 +42,8 @@ class Settings:
             allowed_hosts=allowed_hosts,
             allowed_origins=allowed_origins,
             secure_cookies=os.getenv("MAILBRIDGE_SECURE_COOKIES", "false").lower() in {"1", "true", "yes", "on"},
+            auto_sync_interval_seconds=max(30, int(os.getenv("MAILBRIDGE_AUTO_SYNC_INTERVAL_SECONDS", "300"))),
+            auto_sync_limit=max(1, int(os.getenv("MAILBRIDGE_AUTO_SYNC_LIMIT", "50"))),
         )
 
 

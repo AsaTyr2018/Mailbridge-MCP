@@ -19,6 +19,7 @@ from . import users
 from . import auth_context
 from . import syncops
 from . import automation
+from . import syncjobs
 
 
 mcp_app = mcp.streamable_http_app()
@@ -27,8 +28,12 @@ mcp_app = mcp.streamable_http_app()
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
     migrate()
+    syncjobs.start_worker()
     async with mcp.session_manager.run():
-        yield
+        try:
+            yield
+        finally:
+            syncjobs.stop_worker()
 
 
 app = FastAPI(title="Mailbridge MCP", lifespan=lifespan)
@@ -284,6 +289,7 @@ def accounts_page(request: Request, notice: str | None = None):
         "accounts.html",
         {
             "accounts": mailops.list_accounts(user=user),
+            "sync_jobs": syncjobs.list_sync_jobs(user=user, limit=10),
             "notice": notice,
             "user": user,
         },
@@ -302,6 +308,19 @@ def new_account_page(request: Request, notice: str | None = None):
             "user": user,
         },
     )
+
+
+@app.post("/accounts/cache/flush")
+def flush_own_mail_cache(request: Request):
+    user = getattr(request.state, "user", None) or current_user(request)
+    try:
+        result = mailops.flush_mail_cache(user=user)
+        return RedirectResponse(
+            f"/accounts?notice=Mail%20cache%20flushed:%20{result['deleted_messages']}%20indexed%20messages%20removed",
+            status_code=303,
+        )
+    except Exception as exc:
+        return RedirectResponse(f"/accounts?notice=Mail%20cache%20flush%20failed:%20{quote(str(exc))}", status_code=303)
 
 
 @app.post("/mcp-token/renew", response_class=HTMLResponse)
@@ -511,10 +530,25 @@ def test_smtp(request: Request, account_id: int):
 @app.post("/accounts/{account_id}/maintenance/resync")
 def maintenance_resync(request: Request, account_id: int):
     try:
-        result = mailops.sync_account(account_id, limit=100, user=getattr(request.state, "user", None))
-        return RedirectResponse(f"/accounts?notice=Resync%20ok:%20indexed%20{quote(str(result['indexed']))}", status_code=303)
+        result = syncjobs.enqueue_sync_job(account_id, limit=1000, mode="manual_full", user=getattr(request.state, "user", None), requested_by="http")
+        already = "%20already%20running" if result.get("already_running") else ""
+        return RedirectResponse(f"/accounts?notice=Resync%20queued{already}:%20job%20{result['id']}", status_code=303)
     except Exception as exc:
         return RedirectResponse(f"/accounts?notice=Resync%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/sync-jobs/{job_id}/cancel")
+def cancel_sync_job(request: Request, job_id: int):
+    try:
+        syncjobs.cancel_sync_job(job_id, user=getattr(request.state, "user", None))
+        return RedirectResponse("/accounts?notice=Sync%20job%20cancel%20requested", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/accounts?notice=Sync%20job%20cancel%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.get("/api/sync-jobs/{job_id}")
+def api_sync_job(request: Request, job_id: int):
+    return syncjobs.get_sync_job(job_id, user=getattr(request.state, "user", None))
 
 
 @app.post("/accounts/{account_id}/sync-profiles")
@@ -675,6 +709,19 @@ async def admin_registration(request: Request):
     form = await request.form()
     users.set_registration_enabled(_bool_form(form.get("registration_enabled")))
     return RedirectResponse("/admin?notice=Registration%20updated", status_code=303)
+
+
+@app.post("/admin/cache/flush")
+def admin_flush_mail_cache(request: Request):
+    admin = require_admin(request)
+    try:
+        result = mailops.flush_mail_cache(user=admin, all_users=True)
+        return RedirectResponse(
+            f"/admin?notice=Global%20mail%20cache%20flushed:%20{result['deleted_messages']}%20indexed%20messages%20removed",
+            status_code=303,
+        )
+    except Exception as exc:
+        return RedirectResponse(f"/admin?notice=Global%20mail%20cache%20flush%20failed:%20{quote(str(exc))}", status_code=303)
 
 
 @app.post("/admin/users/{user_id}/lock")

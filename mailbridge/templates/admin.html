@@ -16,6 +16,19 @@
       </form>
     </section>
 
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Cache</h2>
+          <div class="muted">Flush the indexed mail cache for all users. Accounts, drafts, audit logs and tokens stay intact.</div>
+        </div>
+      </div>
+      <form method="post" action="/admin/cache/flush" class="actions" onsubmit="return confirm('Flush the indexed mail cache for every user? This cannot be undone.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="danger">Flush all cache</button>
+      </form>
+    </section>
+
     <section>
       <div class="panel-header">
         <div>

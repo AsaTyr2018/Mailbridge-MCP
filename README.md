@@ -27,6 +27,10 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Per-user automation tokens for personal automation clients such as MCP-MASH.
 - User-owned mail accounts.
 - IMAP sync and SQLite FTS indexing.
+- Background sync job queue with progress, cancellation, and non-blocking Web/MCP requests.
+- Automatic recent-mail sync every five minutes by default.
+- Cached IMAP flag reconcile so read/unread state stays fresh without downloading message bodies.
+- User and admin mail-index cache flush controls.
 - Privacy-aware mail index modes: `metadata_only`, `headers`, and `full_text`.
 - User-owned Contact/Calendar sync profiles.
 - CardDAV contact sync into a local searchable contact index.
@@ -42,7 +46,7 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Security Audit for MCP token usage.
 - User-scoped audit views; admins can inspect global usage.
 - Admin menu for registration on/off and user lock/delete/token renew.
-- Automation-scoped `move_messages` support for account-local mailbox rules.
+- Automation-scoped mail actions for move, mark read/unread, trash, and folder-backed labels.
 - Gmail-style search operators such as `from:`, `to:`, `subject:`, `newer_than:`, `after:`, `has:attachment`, `filename:`, `larger:`.
 
 ## Add-on: MCP-MASH
@@ -60,6 +64,7 @@ The web UI provides these operational pages:
 
 - `Dashboard`: runtime status, MCP URL, token renewal, Bearer Security summary.
 - `Accounts`: account list and account actions.
+- `Sync Jobs`: recent background sync status, progress, and cancellation.
 - `Add Account`: guided account creation with email/password autodiscovery and collapsed advanced IMAP/SMTP settings.
 - `Queue`: pending MCP-created drafts. No approve/reject buttons are shown here.
 - `Mail History`: recent indexed mail metadata.
@@ -120,6 +125,10 @@ enabled = true
 - `list_accounts`
 - `get_account_status`
 - `sync_account`
+- `start_sync_account`
+- `get_sync_job`
+- `list_sync_jobs`
+- `cancel_sync_job`
 - `search_mail`
 - `get_message`
 - `get_thread`
@@ -151,6 +160,12 @@ enabled = true
 - `list_automation_tokens`
 - `revoke_automation_token`
 - `move_messages`
+- `mark_messages`
+- `trash_messages`
+- `add_label_to_messages`
+- `remove_label_from_messages`
+
+`sync_account` now queues a background sync job instead of blocking the MCP request. Use `get_sync_job` or `list_sync_jobs` to inspect progress.
 
 Calendar/contact tools read normalized local data from configured sync profiles. CardDAV and CalDAV profiles perform direct DAV item sync. ActiveSync profiles perform the ActiveSync handshake and folder discovery first; for Mailcow/SOGo-style servers, discovered `vcard` and `vevent` collections are mapped to the matching DAV collections and imported into the same local indexes.
 

@@ -9,7 +9,13 @@
           <h2>Accounts</h2>
           <div class="muted">Per-user IMAP/SMTP accounts bound to your bearer token.</div>
         </div>
-        <a class="button" href="/accounts/new">Add Account</a>
+        <div class="actions">
+          <form method="post" action="/accounts/cache/flush" onsubmit="return confirm('Flush your local indexed mail cache? Accounts, drafts and audit logs stay intact.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="secondary">Flush cache</button>
+          </form>
+          <a class="button" href="/accounts/new">Add Account</a>
+        </div>
       </div>
       <div class="table-shell">
         <table>
@@ -49,6 +55,64 @@
               </tr>
             {% else %}
               <tr><td colspan="5">No accounts configured.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <div class="panel-header">
+        <div>
+          <h2>Sync Jobs</h2>
+          <div class="muted">Background mail sync queue. Auto-sync runs every five minutes for the latest 50 messages per account.</div>
+        </div>
+      </div>
+      <div class="table-shell">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Account</th>
+              <th>Status</th>
+              <th>Progress</th>
+              <th>Mode</th>
+              <th>Time</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for job in sync_jobs %}
+              <tr>
+                <td>{{ job.id }}</td>
+                <td>{{ job.account_id }}</td>
+                <td>
+                  <span class="badge {% if job.status == 'done' %}ok{% elif job.status in ['failed', 'cancelled'] %}danger{% else %}warn{% endif %}">{{ job.status }}</span>
+                  {% if job.error_message %}<br><span class="muted">{{ job.error_message }}</span>{% endif %}
+                </td>
+                <td>
+                  Indexed {{ job.indexed }} / processed {{ job.processed }}<br>
+                  Flags updated {{ job.updated_flags }}
+                  {% if job.current_folder %}<br><span class="muted">{{ job.current_folder }}</span>{% endif %}
+                </td>
+                <td>{{ job.mode }}<br><span class="muted">limit {{ job.limit_count }}</span></td>
+                <td>
+                  <span class="muted">Created {{ job.created_at }}</span><br>
+                  {% if job.finished_at %}<span class="muted">Finished {{ job.finished_at }}</span>{% endif %}
+                </td>
+                <td class="actions">
+                  {% if job.status in ['queued', 'running'] %}
+                    <form method="post" action="/sync-jobs/{{ job.id }}/cancel">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <button class="secondary">Cancel</button>
+                    </form>
+                  {% else %}
+                    <span class="muted">-</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7">No sync jobs yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>

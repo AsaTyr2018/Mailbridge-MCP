@@ -10,7 +10,21 @@ from .security import secret_box
 from . import users
 
 
-DEFAULT_PERMISSIONS = ["list_accounts", "sync", "search", "read", "move", "trash", "mark_read"]
+DEFAULT_PERMISSIONS = [
+    "list_accounts",
+    "sync",
+    "search",
+    "read",
+    "attachments",
+    "move",
+    "trash",
+    "mark_read",
+    "mark_unread",
+    "label",
+    "draft",
+    "forward",
+    "send",
+]
 
 
 def _hash_secret(value: str) -> str:

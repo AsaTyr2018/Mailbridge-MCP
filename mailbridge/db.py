@@ -280,6 +280,27 @@ def migrate() -> None:
                 PRIMARY KEY (token_id, account_id)
             );
 
+            CREATE TABLE IF NOT EXISTS sync_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                mode TEXT NOT NULL DEFAULT 'manual_recent',
+                status TEXT NOT NULL DEFAULT 'queued',
+                requested_by TEXT NOT NULL DEFAULT '',
+                limit_count INTEGER NOT NULL DEFAULT 50,
+                current_folder TEXT NOT NULL DEFAULT '',
+                processed INTEGER NOT NULL DEFAULT 0,
+                indexed INTEGER NOT NULL DEFAULT 0,
+                updated_flags INTEGER NOT NULL DEFAULT 0,
+                total_estimate INTEGER NOT NULL DEFAULT 0,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                started_at TEXT,
+                finished_at TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             INSERT OR IGNORE INTO app_settings (key, value)
             VALUES ('registration_enabled', 'true');
 
@@ -326,3 +347,5 @@ def migrate() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS calendar_events_account_time_idx ON calendar_events(account_id, starts_at, ends_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS automation_tokens_owner_idx ON automation_tokens(owner_user_id, enabled)")
         conn.execute("CREATE INDEX IF NOT EXISTS automation_token_accounts_account_idx ON automation_token_accounts(account_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS sync_jobs_account_status_idx ON sync_jobs(account_id, status, created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS sync_jobs_owner_idx ON sync_jobs(owner_user_id, created_at)")

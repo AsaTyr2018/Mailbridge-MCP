@@ -8,8 +8,10 @@ from mcp.server.fastmcp.server import TransportSecuritySettings
 from . import mailops
 from . import syncops
 from . import automation
+from . import syncjobs
 from .audit import audit
 from .auth_context import get_automation_token, get_mcp_user
+from .config import settings
 from .db import db
 
 
@@ -23,19 +25,8 @@ mcp = FastMCP(
     ),
     streamable_http_path="/",
     transport_security=TransportSecuritySettings(
-        allowed_hosts=[
-            "127.0.0.1",
-            "127.0.0.1:18082",
-            "localhost",
-            "localhost:18082",
-            "192.168.1.172",
-            "192.168.1.172:18082",
-        ],
-        allowed_origins=[
-            "http://127.0.0.1:18082",
-            "http://localhost:18082",
-            "http://192.168.1.172:18082",
-        ],
+        allowed_hosts=list(settings.allowed_hosts),
+        allowed_origins=list(settings.allowed_origins),
     ),
 )
 
@@ -105,10 +96,38 @@ def get_account_status(account_id: int) -> dict[str, Any]:
 
 @mcp.tool()
 def sync_account(account_id: int, limit: int = 100) -> dict[str, Any]:
-    """Trigger IMAP sync and local indexing for an account."""
+    """Queue IMAP sync and local indexing for an account. Use get_sync_job to poll progress."""
     _require("sync", account_id)
-    safe_limit = max(1, min(limit, 1000))
-    return mailops.sync_account(account_id, limit=safe_limit, user=get_mcp_user())
+    safe_limit = max(1, min(limit, 100000))
+    return syncjobs.enqueue_sync_job(account_id, limit=safe_limit, mode="manual_mcp", user=get_mcp_user(), requested_by="mcp")
+
+
+@mcp.tool()
+def start_sync_account(account_id: int, limit: int = 1000, mode: str = "manual_mcp") -> dict[str, Any]:
+    """Start a background sync job for an account and return the job record."""
+    _require("sync", account_id)
+    safe_limit = max(1, min(limit, 100000))
+    return syncjobs.enqueue_sync_job(account_id, limit=safe_limit, mode=mode, user=get_mcp_user(), requested_by="mcp")
+
+
+@mcp.tool()
+def get_sync_job(job_id: int) -> dict[str, Any]:
+    """Return progress and result metadata for a background sync job."""
+    return syncjobs.get_sync_job(job_id, user=get_mcp_user())
+
+
+@mcp.tool()
+def list_sync_jobs(account_id: int | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    """List recent background sync jobs visible to the current user."""
+    if account_id is not None:
+        _require("sync", account_id)
+    return syncjobs.list_sync_jobs(user=get_mcp_user(), account_id=account_id, limit=limit)
+
+
+@mcp.tool()
+def cancel_sync_job(job_id: int) -> dict[str, Any]:
+    """Cancel a queued sync job or request cancellation for a running job."""
+    return syncjobs.cancel_sync_job(job_id, user=get_mcp_user())
 
 
 @mcp.tool()
@@ -526,3 +545,31 @@ def move_messages(account_id: int, message_ids: list[int], target_folder: str, s
     """Move indexed messages to another folder. Automation tokens must have move permission for the account."""
     _require("move", account_id)
     return mailops.move_messages(account_id, message_ids, target_folder, source_folder=source_folder, user=get_mcp_user())
+
+
+@mcp.tool()
+def mark_messages(account_id: int, message_ids: list[int], read: bool = True, source_folder: str = "") -> dict[str, Any]:
+    """Mark indexed messages read or unread through IMAP flags."""
+    _require("mark_read" if read else "mark_unread", account_id)
+    return mailops.mark_messages(account_id, message_ids, read=read, source_folder=source_folder, user=get_mcp_user())
+
+
+@mcp.tool()
+def trash_messages(account_id: int, message_ids: list[int], trash_folder: str = "Trash", source_folder: str = "") -> dict[str, Any]:
+    """Move indexed messages to a trash folder. Automation tokens must have trash permission."""
+    _require("trash", account_id)
+    return mailops.trash_messages(account_id, message_ids, trash_folder=trash_folder, source_folder=source_folder, user=get_mcp_user())
+
+
+@mcp.tool()
+def add_label_to_messages(account_id: int, message_ids: list[int], label: str, source_folder: str = "") -> dict[str, Any]:
+    """Add a folder-backed label by copying indexed messages into that folder."""
+    _require("label", account_id)
+    return mailops.add_label_to_messages(account_id, message_ids, label, source_folder=source_folder, user=get_mcp_user())
+
+
+@mcp.tool()
+def remove_label_from_messages(account_id: int, message_ids: list[int], label: str) -> dict[str, Any]:
+    """Remove a folder-backed label by deleting matching indexed messages from that folder."""
+    _require("label", account_id)
+    return mailops.remove_label_from_messages(account_id, message_ids, label, user=get_mcp_user())
