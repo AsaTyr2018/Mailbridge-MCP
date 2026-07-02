@@ -17,6 +17,7 @@ from . import mailops
 from .mcp_server import mcp
 from . import users
 from . import auth_context
+from . import syncops
 
 
 mcp_app = mcp.streamable_http_app()
@@ -336,6 +337,7 @@ def _account_form(data: dict[str, Any]) -> dict[str, Any]:
         "smtp_username": data.get("smtp_username", "").strip(),
         "smtp_password": data.get("smtp_password", ""),
         "sync_folders": data.get("sync_folders", "INBOX").strip() or "INBOX",
+        "mail_index_mode": data.get("mail_index_mode", "metadata_only"),
         "sync_calendar_enabled": _bool_form(data.get("sync_calendar_enabled")),
         "sync_contacts_enabled": _bool_form(data.get("sync_contacts_enabled")),
         "mcp_read_enabled": _bool_form(data.get("mcp_read_enabled")),
@@ -355,20 +357,59 @@ def _account_form(data: dict[str, Any]) -> dict[str, Any]:
 async def create_account(request: Request):
     form = await request.form()
     user = getattr(request.state, "user", None)
+    data = dict(form)
     try:
-        mailops.create_account(_account_form(dict(form)), user=user)
+        account_data = _account_form(data)
+        if _bool_form(data.get("autodiscover_account")):
+            password = str(data.get("autodiscover_password") or data.get("imap_password") or data.get("smtp_password") or "")
+            discovered = mailops.autodiscover_account_settings(account_data["email_address"], password)
+            account_data.update(discovered)
+        _validate_account_transport(account_data)
+        account_id = mailops.create_account(account_data, user=user)
     except Exception as exc:
         return RedirectResponse(f"/?notice=Create failed: {exc}", status_code=303)
-    return RedirectResponse("/?notice=Account created", status_code=303)
+    notice = "Account created"
+    if _bool_form(data.get("autodiscover_sync_profiles")):
+        try:
+            result = syncops.autodiscover_sync_profiles(account_id, user=user)
+            notice = f"Account created. Sync autodiscovery created {len(result['created'])}, skipped {len(result['skipped'])}, failed {len(result['failed'])}"
+        except Exception as exc:
+            notice = f"Account created. Sync autodiscovery failed: {exc}"
+    return RedirectResponse(f"/?notice={quote(notice)}", status_code=303)
+
+
+def _validate_account_transport(data: dict[str, Any]) -> None:
+    required = [
+        "email_address",
+        "imap_host",
+        "imap_username",
+        "imap_password",
+        "smtp_host",
+        "smtp_username",
+        "smtp_password",
+    ]
+    missing = [key for key in required if not str(data.get(key, "")).strip()]
+    if missing:
+        raise ValueError("missing account fields: " + ", ".join(missing))
 
 
 @app.get("/accounts/{account_id}", response_class=HTMLResponse)
-def edit_account(request: Request, account_id: int):
+def edit_account(request: Request, account_id: int, notice: str | None = None):
     user = getattr(request.state, "user", None)
     account = mailops.get_account(account_id, user=user)
     if not account:
         raise HTTPException(status_code=404, detail="account not found")
-    return templates.TemplateResponse(request, "account.html", template_context(request, account=account, user=user))
+    return templates.TemplateResponse(
+        request,
+        "account.html",
+        template_context(
+            request,
+            account=account,
+            user=user,
+            notice=notice,
+            sync_profiles=syncops.list_sync_profiles(account_id, user=user),
+        ),
+    )
 
 
 @app.post("/accounts/{account_id}")
@@ -413,6 +454,93 @@ def maintenance_resync(request: Request, account_id: int):
         return RedirectResponse(f"/?notice=Resync ok: indexed {result['indexed']}", status_code=303)
     except Exception as exc:
         return RedirectResponse(f"/?notice=Resync failed: {exc}", status_code=303)
+
+
+@app.post("/accounts/{account_id}/sync-profiles")
+async def create_sync_profile(request: Request, account_id: int):
+    form = await request.form()
+    user = getattr(request.state, "user", None)
+    try:
+        syncops.create_sync_profile(
+            account_id,
+            {
+                "kind": str(form.get("kind", "")),
+                "provider": str(form.get("provider", "")),
+                "name": str(form.get("name", "")),
+                "base_url": str(form.get("base_url", "")),
+                "username": str(form.get("username", "")),
+                "password": str(form.get("password", "")),
+                "enabled": _bool_form(form.get("enabled")),
+            },
+            user=user,
+        )
+        return RedirectResponse(f"/accounts/{account_id}?notice=Sync%20profile%20created", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/accounts/{account_id}?notice=Sync%20profile%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/accounts/{account_id}/sync-profiles/autodiscover")
+def autodiscover_sync_profiles(request: Request, account_id: int):
+    user = getattr(request.state, "user", None)
+    try:
+        result = syncops.autodiscover_sync_profiles(account_id, user=user)
+        created = len(result["created"])
+        skipped = len(result["skipped"])
+        failed = len(result["failed"])
+        return RedirectResponse(
+            f"/accounts/{account_id}?notice=Autodiscovery:%20created%20{created},%20skipped%20{skipped},%20failed%20{failed}",
+            status_code=303,
+        )
+    except Exception as exc:
+        return RedirectResponse(f"/accounts/{account_id}?notice=Autodiscovery%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/sync-profiles/{profile_id}/test")
+def test_sync_profile(request: Request, profile_id: int):
+    user = getattr(request.state, "user", None)
+    try:
+        profile = syncops.get_sync_profile(profile_id, user=user)
+        result = syncops.test_sync_profile(profile_id, user=user)
+        return RedirectResponse(f"/accounts/{profile['account_id']}?notice=Sync%20test:%20{quote(str(result)[:240])}", status_code=303)
+    except Exception as exc:
+        try:
+            account_id = syncops.get_sync_profile(profile_id, user=user)["account_id"]
+        except Exception:
+            account_id = ""
+        return RedirectResponse(f"/accounts/{account_id}?notice=Sync%20test%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/sync-profiles/{profile_id}/discover")
+def discover_sync_profile(request: Request, profile_id: int):
+    user = getattr(request.state, "user", None)
+    try:
+        profile = syncops.get_sync_profile(profile_id, user=user)
+        result = syncops.discover_sync_profile(profile_id, user=user)
+        return RedirectResponse(f"/accounts/{profile['account_id']}?notice=Discover:%20{quote(str(result)[:240])}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/?notice=Discover%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/sync-profiles/{profile_id}/sync")
+def run_sync_profile(request: Request, profile_id: int):
+    user = getattr(request.state, "user", None)
+    try:
+        profile = syncops.get_sync_profile(profile_id, user=user)
+        result = syncops.sync_profile(profile_id, user=user)
+        return RedirectResponse(f"/accounts/{profile['account_id']}?notice=Sync:%20{quote(str(result)[:240])}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/?notice=Sync%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/sync-profiles/{profile_id}/delete")
+def delete_sync_profile(request: Request, profile_id: int):
+    user = getattr(request.state, "user", None)
+    try:
+        profile = syncops.get_sync_profile(profile_id, user=user)
+        syncops.delete_sync_profile(profile_id, user=user)
+        return RedirectResponse(f"/accounts/{profile['account_id']}?notice=Sync%20profile%20deleted", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/?notice=Delete%20failed:%20{quote(str(exc))}", status_code=303)
 
 
 @app.get("/api/accounts")

@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import TransportSecuritySettings
 
 from . import mailops
+from . import syncops
 from .audit import audit
 from .auth_context import get_mcp_user
 from .config import settings
@@ -117,47 +118,93 @@ def analyze_thread(thread_id: str, account_id: int) -> dict[str, Any]:
 
 @mcp.tool()
 def search_contacts(account_id: int, query: str, limit: int = 20) -> dict[str, Any]:
-    """Search synced contacts. Backend placeholder until CardDAV/provider sync is configured."""
+    """Search locally synced contacts from CardDAV or ActiveSync-backed profiles."""
     user = get_mcp_user()
-    account = mailops.get_account(account_id, user=user)
-    if not account:
-        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_contacts", status="error", account_id=account_id, error_message="account not found")
-        raise ValueError("account not found")
-    if not account["mcp_contacts_enabled"]:
-        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_contacts", status="error", account_id=account_id, error_message="contact lookup not allowed for account")
-        raise ValueError("contact lookup not allowed for account")
-    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_contacts", status="ok", account_id=account_id)
-    return {
-        "account_id": account_id,
-        "query": query,
-        "limit": limit,
-        "contacts": [],
-        "status": "not_configured",
-        "message": "Contact sync is part of the service scope but no CardDAV/provider backend is configured in this build yet.",
-    }
+    try:
+        return mailops.search_contacts(account_id, query, limit, user=user)
+    except Exception as exc:
+        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_contacts", status="error", account_id=account_id, error_message=str(exc))
+        raise
 
 
 @mcp.tool()
 def list_calendar_events(account_id: int, start_at: str, end_at: str, limit: int = 50) -> dict[str, Any]:
-    """List synced calendar events. Backend placeholder until CalDAV/provider sync is configured."""
+    """List locally synced calendar events from CalDAV or ActiveSync-backed profiles."""
     user = get_mcp_user()
-    account = mailops.get_account(account_id, user=user)
-    if not account:
-        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_calendar_events", status="error", account_id=account_id, error_message="account not found")
-        raise ValueError("account not found")
-    if not account["mcp_calendar_enabled"]:
-        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_calendar_events", status="error", account_id=account_id, error_message="calendar lookup not allowed for account")
-        raise ValueError("calendar lookup not allowed for account")
-    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_calendar_events", status="ok", account_id=account_id)
-    return {
-        "account_id": account_id,
-        "start_at": start_at,
-        "end_at": end_at,
-        "limit": limit,
-        "events": [],
-        "status": "not_configured",
-        "message": "Calendar sync is part of the service scope but no CalDAV/provider backend is configured in this build yet.",
+    try:
+        return mailops.list_calendar_events(account_id, start_at, end_at, limit, user=user)
+    except Exception as exc:
+        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_calendar_events", status="error", account_id=account_id, error_message=str(exc))
+        raise
+
+
+@mcp.tool()
+def list_sync_profiles(account_id: int) -> list[dict[str, Any]]:
+    """List contact/calendar sync profiles for an account."""
+    user = get_mcp_user()
+    profiles = syncops.list_sync_profiles(account_id, user=user)
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_sync_profiles", status="ok", account_id=account_id)
+    return profiles
+
+
+@mcp.tool()
+def sync_profile(profile_id: int) -> dict[str, Any]:
+    """Run one configured contact/calendar sync profile."""
+    return syncops.sync_profile(profile_id, user=get_mcp_user())
+
+
+@mcp.tool()
+def create_contact(account_id: int, display_name: str, email: str, phone: str = "", company: str = "", profile_id: int | None = None) -> dict[str, Any]:
+    """Create a contact through a writable CardDAV or ActiveSync-backed profile."""
+    return syncops.create_contact(account_id, {"display_name": display_name, "email": email, "phone": phone, "company": company}, user=get_mcp_user(), profile_id=profile_id)
+
+
+@mcp.tool()
+def update_contact(contact_id: int, display_name: str = "", email: str = "", phone: str = "", company: str = "") -> dict[str, Any]:
+    """Update a locally indexed contact and write the change back to its provider."""
+    data = {key: value for key, value in {"display_name": display_name, "email": email, "phone": phone, "company": company}.items() if value != ""}
+    return syncops.update_contact(contact_id, data, user=get_mcp_user())
+
+
+@mcp.tool()
+def delete_contact(contact_id: int) -> dict[str, Any]:
+    """Delete a contact from its provider and local index."""
+    return syncops.delete_contact(contact_id, user=get_mcp_user())
+
+
+@mcp.tool()
+def create_calendar_event(account_id: int, title: str, starts_at: str, ends_at: str = "", location: str = "", description: str = "", attendees: str = "", profile_id: int | None = None) -> dict[str, Any]:
+    """Create a calendar event through a writable CalDAV or ActiveSync-backed profile."""
+    return syncops.create_calendar_event(
+        account_id,
+        {"title": title, "starts_at": starts_at, "ends_at": ends_at, "location": location, "description": description, "attendees": attendees},
+        user=get_mcp_user(),
+        profile_id=profile_id,
+    )
+
+
+@mcp.tool()
+def update_calendar_event(event_id: int, title: str = "", starts_at: str = "", ends_at: str = "", location: str = "", description: str = "", attendees: str = "") -> dict[str, Any]:
+    """Update a locally indexed calendar event and write the change back to its provider."""
+    data = {
+        key: value
+        for key, value in {
+            "title": title,
+            "starts_at": starts_at,
+            "ends_at": ends_at,
+            "location": location,
+            "description": description,
+            "attendees": attendees,
+        }.items()
+        if value != ""
     }
+    return syncops.update_calendar_event(event_id, data, user=get_mcp_user())
+
+
+@mcp.tool()
+def delete_calendar_event(event_id: int) -> dict[str, Any]:
+    """Delete a calendar event from its provider and local index."""
+    return syncops.delete_calendar_event(event_id, user=get_mcp_user())
 
 
 @mcp.tool()

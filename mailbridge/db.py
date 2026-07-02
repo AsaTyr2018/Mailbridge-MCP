@@ -60,6 +60,7 @@ def migrate() -> None:
                 sync_folders TEXT NOT NULL DEFAULT 'INBOX',
                 sync_calendar_enabled INTEGER NOT NULL DEFAULT 0,
                 sync_contacts_enabled INTEGER NOT NULL DEFAULT 0,
+                mail_index_mode TEXT NOT NULL DEFAULT 'metadata_only',
                 sync_interval_seconds INTEGER NOT NULL DEFAULT 900,
                 mcp_read_enabled INTEGER NOT NULL DEFAULT 1,
                 mcp_search_enabled INTEGER NOT NULL DEFAULT 1,
@@ -160,6 +161,52 @@ def migrate() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS sync_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                base_url TEXT NOT NULL DEFAULT '',
+                username TEXT NOT NULL DEFAULT '',
+                secret TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_sync_at TEXT,
+                last_sync_error TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS contacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                profile_id INTEGER REFERENCES sync_profiles(id) ON DELETE SET NULL,
+                provider_uid TEXT NOT NULL,
+                display_name TEXT NOT NULL DEFAULT '',
+                emails TEXT NOT NULL DEFAULT '',
+                phones TEXT NOT NULL DEFAULT '',
+                company TEXT NOT NULL DEFAULT '',
+                raw_vcard TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(account_id, profile_id, provider_uid)
+            );
+
+            CREATE TABLE IF NOT EXISTS calendar_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                profile_id INTEGER REFERENCES sync_profiles(id) ON DELETE SET NULL,
+                provider_uid TEXT NOT NULL,
+                calendar_name TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                starts_at TEXT NOT NULL DEFAULT '',
+                ends_at TEXT NOT NULL DEFAULT '',
+                attendees TEXT NOT NULL DEFAULT '',
+                location TEXT NOT NULL DEFAULT '',
+                raw_ics TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(account_id, profile_id, provider_uid)
+            );
+
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 actor_type TEXT NOT NULL,
@@ -209,6 +256,8 @@ def migrate() -> None:
         account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)").fetchall()}
         if "owner_user_id" not in account_columns:
             conn.execute("ALTER TABLE accounts ADD COLUMN owner_user_id INTEGER")
+        if "mail_index_mode" not in account_columns:
+            conn.execute("ALTER TABLE accounts ADD COLUMN mail_index_mode TEXT NOT NULL DEFAULT 'full_text'")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS accounts_owner_name_idx ON accounts(owner_user_id, name)")
         existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
         for column_name, column_def in {
@@ -240,3 +289,6 @@ def migrate() -> None:
         }.items():
             if column_name not in audit_columns:
                 conn.execute(f"ALTER TABLE audit_log ADD COLUMN {column_name} {column_def}")
+        conn.execute("CREATE INDEX IF NOT EXISTS sync_profiles_account_idx ON sync_profiles(account_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS contacts_account_name_idx ON contacts(account_id, display_name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS calendar_events_account_time_idx ON calendar_events(account_id, starts_at, ends_at)")

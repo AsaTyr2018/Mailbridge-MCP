@@ -18,11 +18,28 @@
       <label>Sync folders</label>
       <input name="sync_folders" value="{{ account.sync_folders or 'INBOX' }}">
     </div>
+    <div>
+      <label>Mail index mode</label>
+      <select name="mail_index_mode">
+        {% for mode in ["metadata_only", "headers", "full_text"] %}
+          <option value="{{ mode }}" {% if (account.mail_index_mode or 'metadata_only') == mode %}selected{% endif %}>{{ mode }}</option>
+        {% endfor %}
+      </select>
+    </div>
   </div>
+
+  {% if not account.id %}
+    <h3>Autodiscovery</h3>
+    <div class="checkboxes">
+      <label><input type="checkbox" name="autodiscover_account" checked>Detect IMAP/SMTP from email and password</label>
+      <label><input type="checkbox" name="autodiscover_sync_profiles" checked>Detect contacts and calendar after save</label>
+    </div>
+    <p class="muted">For autodiscovery, enter email address and the mail password below. IMAP/SMTP fields can stay empty.</p>
+  {% endif %}
 
   <h3>IMAP</h3>
   <div class="grid">
-    <div><label>Host</label><input name="imap_host" required value="{{ account.imap_host or '' }}"></div>
+    <div><label>Host</label><input name="imap_host" {% if account.id %}required{% endif %} value="{{ account.imap_host or '' }}"></div>
     <div><label>Port</label><input name="imap_port" type="number" value="{{ account.imap_port or 993 }}"></div>
     <div>
       <label>TLS</label>
@@ -32,13 +49,13 @@
         {% endfor %}
       </select>
     </div>
-    <div><label>Username</label><input name="imap_username" required value="{{ account.imap_username or '' }}"></div>
-    <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="imap_password" type="password" {% if not account.id %}required{% endif %}></div>
+    <div><label>Username</label><input name="imap_username" {% if account.id %}required{% endif %} value="{{ account.imap_username or '' }}"></div>
+    <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="imap_password" type="password"></div>
   </div>
 
   <h3>SMTP</h3>
   <div class="grid">
-    <div><label>Host</label><input name="smtp_host" required value="{{ account.smtp_host or '' }}"></div>
+    <div><label>Host</label><input name="smtp_host" {% if account.id %}required{% endif %} value="{{ account.smtp_host or '' }}"></div>
     <div><label>Port</label><input name="smtp_port" type="number" value="{{ account.smtp_port or 587 }}"></div>
     <div>
       <label>TLS</label>
@@ -48,8 +65,8 @@
         {% endfor %}
       </select>
     </div>
-    <div><label>Username</label><input name="smtp_username" required value="{{ account.smtp_username or '' }}"></div>
-    <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="smtp_password" type="password" {% if not account.id %}required{% endif %}></div>
+    <div><label>Username</label><input name="smtp_username" {% if account.id %}required{% endif %} value="{{ account.smtp_username or '' }}"></div>
+    <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="smtp_password" type="password"></div>
   </div>
 
   <h3>MCP Policy</h3>

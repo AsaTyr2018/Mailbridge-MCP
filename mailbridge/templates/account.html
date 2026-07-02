@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
   <section class="panel">
     <div class="panel-header">
       <div>
@@ -9,4 +10,85 @@
     </div>
     {% include "account_form.html" %}
   </section>
+
+  <section>
+    <div class="panel-header">
+      <div>
+        <h2>Contact & Calendar Sync</h2>
+        <div class="muted">Provider profiles for CardDAV, CalDAV and ActiveSync. MCP reads only normalized local data.</div>
+      </div>
+      <form method="post" action="/accounts/{{ account.id }}/sync-profiles/autodiscover">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button class="secondary">Autodiscovery</button>
+      </form>
+    </div>
+    <div class="table-shell">
+      <table>
+        <thead><tr><th>Name</th><th>Kind</th><th>Provider</th><th>Endpoint</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          {% for profile in sync_profiles %}
+            <tr>
+              <td><strong>{{ profile.name }}</strong><br><span class="muted">id {{ profile.id }}</span></td>
+              <td>{{ profile.kind }}</td>
+              <td><span class="badge">{{ profile.provider }}</span></td>
+              <td>{{ profile.base_url }}</td>
+              <td>
+                {% if profile.enabled %}<span class="badge ok">Enabled</span>{% else %}<span class="badge danger">Disabled</span>{% endif %}<br>
+                <span class="muted">Last: {{ profile.last_sync_at or "never" }}</span>
+                {% if profile.last_sync_error %}<br><span class="muted">Error: {{ profile.last_sync_error }}</span>{% endif %}
+              </td>
+              <td class="actions">
+                <form method="post" action="/sync-profiles/{{ profile.id }}/test"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Test</button></form>
+                <form method="post" action="/sync-profiles/{{ profile.id }}/discover"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Discover</button></form>
+                <form method="post" action="/sync-profiles/{{ profile.id }}/sync"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Sync</button></form>
+                <form method="post" action="/sync-profiles/{{ profile.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Delete</button></form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6">No sync profiles configured.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <details class="panel add-account-panel">
+    <summary class="button">Add Sync Profile</summary>
+    <div class="panel-header">
+      <div>
+        <h2>Add Sync Profile</h2>
+        <div class="muted">Use CardDAV for contacts, CalDAV for calendars, or ActiveSync where available.</div>
+      </div>
+    </div>
+    <form method="post" action="/accounts/{{ account.id }}/sync-profiles">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="grid">
+        <div><label>Name</label><input name="name" placeholder="contacts"></div>
+        <div>
+          <label>Kind</label>
+          <select name="kind">
+            <option value="contacts">contacts</option>
+            <option value="calendar">calendar</option>
+          </select>
+        </div>
+        <div>
+          <label>Provider</label>
+          <select name="provider">
+            <option value="carddav">carddav</option>
+            <option value="caldav">caldav</option>
+            <option value="activesync">activesync</option>
+          </select>
+        </div>
+        <div><label>Base URL</label><input name="base_url" placeholder="https://mail.example.com/Microsoft-Server-ActiveSync"></div>
+        <div><label>Username</label><input name="username" placeholder="{{ account.imap_username }}"></div>
+        <div><label>Password</label><input name="password" type="password" placeholder="leave blank to use account IMAP password"></div>
+      </div>
+      <div class="checkboxes">
+        <label><input type="checkbox" name="enabled" checked>Enabled</label>
+      </div>
+      <div class="actions" style="margin-top: 16px;">
+        <button>Save Sync Profile</button>
+      </div>
+    </form>
+  </details>
 {% endblock %}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import imaplib
 import json
 import re
+import socket
 import smtplib
 import ssl
 from email import policy
@@ -64,12 +65,12 @@ def create_account(data: dict[str, Any], user: dict[str, Any] | None = None) -> 
                 owner_user_id, name, enabled, email_address, display_name,
                 imap_host, imap_port, imap_tls_mode, imap_username, imap_secret,
                 smtp_host, smtp_port, smtp_tls_mode, smtp_username, smtp_secret,
-                sync_folders, sync_calendar_enabled, sync_contacts_enabled,
+                sync_folders, sync_calendar_enabled, sync_contacts_enabled, mail_index_mode,
                 mcp_read_enabled, mcp_search_enabled, mcp_calendar_enabled,
                 mcp_contacts_enabled, mcp_draft_enabled, mcp_send_mode,
                 max_search_results, max_message_bytes,
                 allowed_recipient_domains, blocked_recipient_domains
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user["id"] if user else None,
@@ -90,6 +91,7 @@ def create_account(data: dict[str, Any], user: dict[str, Any] | None = None) -> 
                 data.get("sync_folders", "INBOX"),
                 int(data.get("sync_calendar_enabled", False)),
                 int(data.get("sync_contacts_enabled", False)),
+                data.get("mail_index_mode", "metadata_only"),
                 int(data.get("mcp_read_enabled", True)),
                 int(data.get("mcp_search_enabled", True)),
                 int(data.get("mcp_calendar_enabled", False)),
@@ -107,6 +109,115 @@ def create_account(data: dict[str, Any], user: dict[str, Any] | None = None) -> 
     return account_id
 
 
+def autodiscover_account_settings(email_address: str, password: str) -> dict[str, Any]:
+    email_address = email_address.strip()
+    if not email_address or "@" not in email_address:
+        raise ValueError("valid email address required for autodiscovery")
+    if not password:
+        raise ValueError("password required for autodiscovery")
+    domain = email_address.split("@", 1)[1].lower()
+    hosts, smtp_hosts = _mail_autodiscovery_hosts(domain)
+    imap_result = _autodiscover_imap(hosts, email_address, password)
+    smtp_result = _autodiscover_smtp(smtp_hosts, email_address, password)
+    return {
+        "email_address": email_address,
+        "imap_host": imap_result["host"],
+        "imap_port": imap_result["port"],
+        "imap_tls_mode": imap_result["tls_mode"],
+        "imap_username": email_address,
+        "imap_password": password,
+        "smtp_host": smtp_result["host"],
+        "smtp_port": smtp_result["port"],
+        "smtp_tls_mode": smtp_result["tls_mode"],
+        "smtp_username": email_address,
+        "smtp_password": password,
+        "imap_test": imap_result,
+        "smtp_test": smtp_result,
+    }
+
+
+def _autodiscover_imap(hosts: list[str], username: str, password: str) -> dict[str, Any]:
+    attempts = []
+    auth_hint = ""
+    for host in hosts:
+        for port, tls_mode in ((993, "ssl"), (143, "starttls")):
+            try:
+                if tls_mode == "ssl":
+                    client = imaplib.IMAP4_SSL(host, port, timeout=8)
+                else:
+                    client = imaplib.IMAP4(host, port, timeout=8)
+                    client.starttls(ssl_context=ssl.create_default_context())
+                try:
+                    client.login(username, password)
+                    return {"ok": True, "host": host, "port": port, "tls_mode": tls_mode}
+                finally:
+                    try:
+                        client.logout()
+                    except Exception:
+                        pass
+            except Exception as exc:
+                message = str(exc)
+                if _is_google_app_password_error(message):
+                    auth_hint = _google_app_password_message()
+                attempts.append(f"{host}:{port}/{tls_mode}: {message}")
+    if auth_hint:
+        raise ValueError(auth_hint)
+    raise ValueError("IMAP autodiscovery failed: " + " | ".join(attempts[:6]))
+
+
+def _autodiscover_smtp(hosts: list[str], username: str, password: str) -> dict[str, Any]:
+    attempts = []
+    auth_hint = ""
+    for host in hosts:
+        for port, tls_mode in ((587, "starttls"), (465, "ssl")):
+            try:
+                if tls_mode == "ssl":
+                    client: smtplib.SMTP = smtplib.SMTP_SSL(host, port, timeout=8)
+                else:
+                    client = smtplib.SMTP(host, port, timeout=8)
+                    client.ehlo()
+                    client.starttls(context=ssl.create_default_context())
+                    client.ehlo()
+                try:
+                    client.login(username, password)
+                    return {"ok": True, "host": host, "port": port, "tls_mode": tls_mode}
+                finally:
+                    try:
+                        client.quit()
+                    except Exception:
+                        pass
+            except (OSError, socket.timeout, smtplib.SMTPException) as exc:
+                message = str(exc)
+                if _is_google_app_password_error(message):
+                    auth_hint = _google_app_password_message()
+                attempts.append(f"{host}:{port}/{tls_mode}: {message}")
+    if auth_hint:
+        raise ValueError(auth_hint)
+    raise ValueError("SMTP autodiscovery failed: " + " | ".join(attempts[:6]))
+
+
+def _mail_autodiscovery_hosts(domain: str) -> tuple[list[str], list[str]]:
+    if domain in {"gmail.com", "googlemail.com"}:
+        return ["imap.gmail.com", "imap.googlemail.com"], ["smtp.gmail.com", "smtp.googlemail.com"]
+    return (
+        list(dict.fromkeys([f"mail.{domain}", f"imap.{domain}", domain])),
+        list(dict.fromkeys([f"mail.{domain}", f"smtp.{domain}", domain])),
+    )
+
+
+def _is_google_app_password_error(message: str) -> bool:
+    lowered = message.lower()
+    return "application-specific password required" in lowered or "answer/185833" in lowered
+
+
+def _google_app_password_message() -> str:
+    return (
+        "Google rejected IMAP/SMTP password login. Use a Google App Password for Gmail/Googlemail "
+        "or OAuth2 support must be added later. Enable 2-Step Verification and create an app password: "
+        "https://support.google.com/accounts/answer/185833"
+    )
+
+
 def update_account(account_id: int, data: dict[str, Any], user: dict[str, Any] | None = None) -> None:
     current = get_account(account_id, include_secret=True, user=user)
     if not current:
@@ -120,7 +231,7 @@ def update_account(account_id: int, data: dict[str, Any], user: dict[str, Any] |
                 name = ?, enabled = ?, email_address = ?, display_name = ?,
                 imap_host = ?, imap_port = ?, imap_tls_mode = ?, imap_username = ?, imap_secret = ?,
                 smtp_host = ?, smtp_port = ?, smtp_tls_mode = ?, smtp_username = ?, smtp_secret = ?,
-                sync_folders = ?, sync_calendar_enabled = ?, sync_contacts_enabled = ?,
+                sync_folders = ?, sync_calendar_enabled = ?, sync_contacts_enabled = ?, mail_index_mode = ?,
                 mcp_read_enabled = ?, mcp_search_enabled = ?, mcp_calendar_enabled = ?,
                 mcp_contacts_enabled = ?, mcp_draft_enabled = ?, mcp_send_mode = ?,
                 max_search_results = ?, max_message_bytes = ?,
@@ -146,6 +257,7 @@ def update_account(account_id: int, data: dict[str, Any], user: dict[str, Any] |
                 data.get("sync_folders", "INBOX"),
                 int(data.get("sync_calendar_enabled", False)),
                 int(data.get("sync_contacts_enabled", False)),
+                data.get("mail_index_mode", "metadata_only"),
                 int(data.get("mcp_read_enabled", False)),
                 int(data.get("mcp_search_enabled", False)),
                 int(data.get("mcp_calendar_enabled", False)),
@@ -159,7 +271,33 @@ def update_account(account_id: int, data: dict[str, Any], user: dict[str, Any] |
                 account_id,
             ),
         )
+    if data.get("mail_index_mode", "metadata_only") in {"metadata_only", "headers"}:
+        _purge_index_content(account_id, data.get("mail_index_mode", "metadata_only"))
     audit(actor_type="human", actor_id=str(user["id"] if user else "admin"), interface="http", action="account_update", status="ok", account_id=account_id)
+
+
+def _purge_index_content(account_id: int, mode: str) -> None:
+    if mode == "full_text":
+        return
+    with db() as conn:
+        if mode == "headers":
+            conn.execute(
+                """
+                UPDATE messages
+                SET snippet = '', text_body = '', attachment_names = '', indexed_at = CURRENT_TIMESTAMP
+                WHERE account_id = ?
+                """,
+                (account_id,),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE messages
+                SET snippet = '', text_body = '', attachment_names = '', headers_json = '{}', indexed_at = CURRENT_TIMESTAMP
+                WHERE account_id = ?
+                """,
+                (account_id,),
+            )
 
 
 def delete_account(account_id: int, user: dict[str, Any] | None = None) -> None:
@@ -252,12 +390,36 @@ def _attachment_names(msg: EmailMessage) -> str:
     return ", ".join(names)
 
 
+def _parse_fetch_size_flags(fetch_meta: str) -> tuple[int, str]:
+    size_match = re.search(r"RFC822\.SIZE\s+(\d+)", fetch_meta, flags=re.IGNORECASE)
+    flags_match = re.search(r"FLAGS\s+\(([^)]*)\)", fetch_meta, flags=re.IGNORECASE)
+    return (
+        int(size_match.group(1)) if size_match else 0,
+        flags_match.group(1) if flags_match else fetch_meta,
+    )
+
+
+def _extract_fetch_payload(msg_data: list[Any]) -> tuple[str, bytes]:
+    raw = b""
+    meta = ""
+    for item in msg_data:
+        if isinstance(item, tuple):
+            try:
+                meta = item[0].decode("utf-8", errors="ignore")
+            except Exception:
+                meta = str(item[0])
+            raw = item[1]
+            break
+    return meta, raw
+
+
 def sync_account(account_id: int, *, limit: int = 100, user: dict[str, Any] | None = None) -> dict[str, Any]:
     account = get_account(account_id, include_secret=True, user=user)
     if not account:
         raise ValueError("account not found")
     if not account["enabled"]:
         raise ValueError("account disabled")
+    index_mode = account.get("mail_index_mode") or "metadata_only"
     indexed = 0
     client = _imap_connect(account)
     try:
@@ -271,38 +433,36 @@ def sync_account(account_id: int, *, limit: int = 100, user: dict[str, Any] | No
                 continue
             uids = data[0].split()[-limit:]
             for uid in uids:
-                status, msg_data = client.uid("fetch", uid, "(RFC822 FLAGS)")
+                if index_mode == "full_text":
+                    fetch_spec = "(RFC822 FLAGS)"
+                elif index_mode == "headers":
+                    fetch_spec = "(BODY.PEEK[HEADER] RFC822.SIZE FLAGS)"
+                else:
+                    fetch_spec = "(BODY.PEEK[HEADER.FIELDS (DATE FROM TO CC BCC SUBJECT MESSAGE-ID REFERENCES IN-REPLY-TO DELIVERED-TO)] RFC822.SIZE FLAGS)"
+                status, msg_data = client.uid("fetch", uid, fetch_spec)
                 if status != "OK" or not msg_data:
                     continue
-                raw = None
-                flags_text = ""
-                for item in msg_data:
-                    if isinstance(item, tuple):
-                        try:
-                            flags_text = item[0].decode("utf-8", errors="ignore")
-                        except Exception:
-                            flags_text = str(item[0])
-                        raw = item[1]
-                        break
+                fetch_meta, raw = _extract_fetch_payload(msg_data)
                 if not raw:
                     continue
                 msg = BytesParser(policy=policy.default).parsebytes(raw)
-                text_body = _message_text(msg)
+                text_body = _message_text(msg) if index_mode == "full_text" else ""
                 subject = str(msg.get("subject", ""))
                 sender = str(msg.get("from", ""))
                 recipients = _address_header(msg, "to")
                 cc = _address_header(msg, "cc")
                 bcc = _address_header(msg, "bcc")
                 delivered_to = _address_header(msg, "delivered-to")
-                attachment_names = _attachment_names(msg)
+                attachment_names = _attachment_names(msg) if index_mode == "full_text" else ""
+                size_bytes, flags_text = _parse_fetch_size_flags(fetch_meta)
                 sent_at = ""
                 if msg.get("date"):
                     try:
                         sent_at = parsedate_to_datetime(str(msg.get("date"))).isoformat()
                     except Exception:
                         sent_at = str(msg.get("date"))
-                snippet = " ".join(text_body.split())[:500]
-                headers = {k: str(v) for k, v in msg.items()}
+                snippet = " ".join(text_body.split())[:500] if index_mode == "full_text" else ""
+                headers = {k: str(v) for k, v in msg.items()} if index_mode in {"headers", "full_text"} else {}
                 with db() as conn:
                     conn.execute(
                         """
@@ -343,7 +503,7 @@ def sync_account(account_id: int, *, limit: int = 100, user: dict[str, Any] | No
                             snippet,
                             text_body,
                             attachment_names,
-                            len(raw),
+                            size_bytes or len(raw),
                             json.dumps(headers),
                             flags_text,
                         ),
@@ -623,6 +783,35 @@ def search_mail(account_id: int, query: str, limit: int | None = None, user: dic
     return [dict(row) for row in rows]
 
 
+def _live_message_body(account: dict[str, Any], row: dict[str, Any], max_bytes: int, user: dict[str, Any] | None = None) -> tuple[str, bool, str, str]:
+    full_account = get_account(int(account["id"]), include_secret=True, user=user)
+    if not full_account:
+        raise ValueError("account not found")
+    client = _imap_connect(full_account)
+    try:
+        status, _ = client.select(row["folder"], readonly=True)
+        if status != "OK":
+            raise ValueError("folder not selectable")
+        status, msg_data = client.uid("fetch", str(row["imap_uid"]).encode("ascii"), "(RFC822)")
+        if status != "OK" or not msg_data:
+            raise ValueError("message fetch failed")
+        _, raw = _extract_fetch_payload(msg_data)
+        if not raw:
+            raise ValueError("message body unavailable")
+        msg = BytesParser(policy=policy.default).parsebytes(raw)
+        body = _message_text(msg)
+        attachment_names = _attachment_names(msg)
+        encoded = body.encode("utf-8")
+        if len(encoded) > max_bytes:
+            return encoded[:max_bytes].decode("utf-8", errors="ignore"), True, attachment_names, "live_imap_truncated"
+        return body, False, attachment_names, "live_imap"
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
 def get_message(message_id: int, user: dict[str, Any] | None = None) -> dict[str, Any]:
     with db() as conn:
         row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
@@ -634,12 +823,21 @@ def get_message(message_id: int, user: dict[str, Any] | None = None) -> dict[str
     result = dict(row)
     max_bytes = int(account["max_message_bytes"])
     body = result["text_body"]
-    encoded = body.encode("utf-8")
-    if len(encoded) > max_bytes:
-        result["text_body"] = encoded[:max_bytes].decode("utf-8", errors="ignore")
-        result["truncated"] = True
+    if not body:
+        live_body, truncated, attachment_names, source = _live_message_body(account, result, max_bytes, user=user)
+        result["text_body"] = live_body
+        result["truncated"] = truncated
+        result["body_source"] = source
+        if attachment_names and not result.get("attachment_names"):
+            result["attachment_names"] = attachment_names
     else:
-        result["truncated"] = False
+        encoded = body.encode("utf-8")
+        if len(encoded) > max_bytes:
+            result["text_body"] = encoded[:max_bytes].decode("utf-8", errors="ignore")
+            result["truncated"] = True
+        else:
+            result["truncated"] = False
+        result["body_source"] = "local_index"
     audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="get_message", status="ok", account_id=int(row["account_id"]), target_resource=str(message_id))
     return result
 
@@ -854,6 +1052,116 @@ def bearer_security_summary(user: dict[str, Any] | None = None) -> dict[str, Any
         "status": status,
         "warning": warning,
     }
+
+
+def search_contacts(account_id: int, query: str, limit: int = 20, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    account = get_account(account_id, user=user)
+    if not account or not account["mcp_contacts_enabled"]:
+        raise ValueError("contact lookup not allowed for account")
+    safe_limit = max(1, min(limit, 100))
+    needle = f"%{query.strip().lower()}%"
+    with db() as conn:
+        if query.strip():
+            rows = conn.execute(
+                """
+                SELECT c.*, sp.provider, sp.name AS profile_name
+                FROM contacts c
+                LEFT JOIN sync_profiles sp ON sp.id = c.profile_id
+                WHERE c.account_id = ?
+                  AND (
+                    lower(c.display_name) LIKE ?
+                    OR lower(c.emails) LIKE ?
+                    OR lower(c.phones) LIKE ?
+                    OR lower(c.company) LIKE ?
+                  )
+                ORDER BY c.display_name, c.emails
+                LIMIT ?
+                """,
+                (account_id, needle, needle, needle, needle, safe_limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT c.*, sp.provider, sp.name AS profile_name
+                FROM contacts c
+                LEFT JOIN sync_profiles sp ON sp.id = c.profile_id
+                WHERE c.account_id = ?
+                ORDER BY c.display_name, c.emails
+                LIMIT ?
+                """,
+                (account_id, safe_limit),
+            ).fetchall()
+    contacts = _dedupe_contacts([dict(row) for row in rows])
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_contacts", status="ok", account_id=account_id)
+    return {
+        "account_id": account_id,
+        "query": query,
+        "limit": safe_limit,
+        "contacts": contacts,
+        "status": "ok",
+    }
+
+
+def _dedupe_contacts(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        emails = str(row.get("emails") or "").lower().strip()
+        name = str(row.get("display_name") or "").lower().strip()
+        key = (emails, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(row)
+    return result
+
+
+def list_calendar_events(account_id: int, start_at: str, end_at: str, limit: int = 50, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    account = get_account(account_id, user=user)
+    if not account or not account["mcp_calendar_enabled"]:
+        raise ValueError("calendar lookup not allowed for account")
+    safe_limit = max(1, min(limit, 200))
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT e.*, sp.provider, sp.name AS profile_name
+            FROM calendar_events e
+            LEFT JOIN sync_profiles sp ON sp.id = e.profile_id
+            WHERE e.account_id = ?
+              AND (? = '' OR e.ends_at = '' OR e.ends_at >= ?)
+              AND (? = '' OR e.starts_at = '' OR e.starts_at <= ?)
+            ORDER BY e.starts_at, e.title
+            LIMIT ?
+            """,
+            (account_id, start_at, start_at, end_at, end_at, safe_limit),
+        ).fetchall()
+    events = _dedupe_calendar_events([dict(row) for row in rows])
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_calendar_events", status="ok", account_id=account_id)
+    return {
+        "account_id": account_id,
+        "start_at": start_at,
+        "end_at": end_at,
+        "limit": safe_limit,
+        "events": events,
+        "status": "ok",
+    }
+
+
+def _dedupe_calendar_events(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for row in rows:
+        key = (
+            str(row.get("provider_uid") or "").lower().strip(),
+            str(row.get("title") or "").lower().strip(),
+            str(row.get("starts_at") or "").strip(),
+            str(row.get("ends_at") or "").strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(row)
+    return result
 
 
 def approve_draft(draft_id: int, approved_by: str = "admin", user: dict[str, Any] | None = None) -> None:

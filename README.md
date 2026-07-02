@@ -26,6 +26,11 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Per-user MCP bearer tokens and Token IDs.
 - User-owned mail accounts.
 - IMAP sync and SQLite FTS indexing.
+- Privacy-aware mail index modes: `metadata_only`, `headers`, and `full_text`.
+- User-owned Contact/Calendar sync profiles.
+- CardDAV contact sync into a local searchable contact index.
+- CalDAV calendar sync into a local event index.
+- ActiveSync endpoint test, folder discovery, and Mailcow/SOGo item sync via discovered DAV collections.
 - Mail history page for indexed message metadata.
 - Draft queue page without web approval buttons; approval is handled through the MCP policy flow.
 - SMTP draft/send flow with guarded send policies.
@@ -106,11 +111,49 @@ enabled = true
 - `analyze_thread`
 - `search_contacts`
 - `list_calendar_events`
+- `list_sync_profiles`
+- `sync_profile`
+- `create_contact`
+- `update_contact`
+- `delete_contact`
+- `create_calendar_event`
+- `update_calendar_event`
+- `delete_calendar_event`
 - `create_draft`
 - `list_drafts`
 - `send_draft`
 
-Calendar/contact tools are present as policy-controlled placeholders until CalDAV/CardDAV/provider sync is configured.
+Calendar/contact tools read normalized local data from configured sync profiles. CardDAV and CalDAV profiles perform direct DAV item sync. ActiveSync profiles perform the ActiveSync handshake and folder discovery first; for Mailcow/SOGo-style servers, discovered `vcard` and `vevent` collections are mapped to the matching DAV collections and imported into the same local indexes.
+
+## Contact And Calendar Sync
+
+On an account page, add one or more sync profiles:
+
+- `carddav` with kind `contacts`, for example `https://mail.example.com/SOGo/dav/user@example.com/Contacts/personal/`
+- `caldav` with kind `calendar`, for example `https://mail.example.com/SOGo/dav/user@example.com/Calendar/personal/`
+- `activesync` with kind `contacts` or `calendar`, for example `https://mail.example.com/Microsoft-Server-ActiveSync`
+
+If the profile username or password is left empty, Mailbridge uses the account IMAP username/password internally. Those credentials stay encrypted in Mailbridge and are not exposed to MCP clients.
+
+Useful operations:
+
+- `Test` verifies authentication and provider reachability.
+- `Discover` lists DAV resources or ActiveSync folders.
+- `Sync` imports CardDAV contacts, CalDAV events, or ActiveSync-discovered Mailcow/SOGo contact/calendar collections into the local database.
+
+MCP clients can then use `search_contacts` and `list_calendar_events` without receiving the underlying mail account password.
+
+Writable contact/calendar tools use the same account-scoped MCP permissions as read tools. They write to CardDAV/CalDAV directly, or to Mailcow/SOGo DAV collections discovered from an ActiveSync profile. Contact tools accept display name, email, phone, and company fields. Calendar tools accept title, start/end timestamps, location, description, and attendee email lists.
+
+## Mail Privacy Modes
+
+New accounts default to `metadata_only`.
+
+- `metadata_only`: stores folder, IMAP UID, message ids, sender/recipient fields, subject, date, flags, and size. It does not store body text, snippets, attachment names, or full headers.
+- `headers`: stores full headers but no body text, snippets, or attachment names.
+- `full_text`: stores extracted text body and snippets for local full-text search.
+
+When `get_message` is called for a message without locally stored body text, Mailbridge fetches the body live from IMAP, returns it to the MCP client, and does not persist that body. Switching an existing account from `full_text` to `metadata_only` or `headers` purges already stored body/snippet data for that account.
 
 ## Search Operators
 
@@ -131,6 +174,8 @@ list: rfc822msgid:
 
 Gmail-specific metadata that IMAP does not generally provide is ignored safely rather than passed raw to SQLite FTS.
 
+Gmail/Googlemail IMAP and SMTP autodiscovery uses Gmail endpoints and requires a Google App Password. Google Calendar/Contacts DAV access may require OAuth2; Mailbridge does not yet implement Google OAuth.
+
 ## Environment
 
 Important variables:
@@ -140,11 +185,13 @@ Important variables:
 - `MAILBRIDGE_ALLOWED_ORIGINS`
 - `MAILBRIDGE_SECURE_COOKIES`
 
-The local compose file in this workspace exposes the app on the LAN:
+The default compose file binds to localhost:
 
 ```text
-http://192.168.1.172:18082/
+http://127.0.0.1:18082/
 ```
+
+For trusted LAN testing, set `MAILBRIDGE_BIND=0.0.0.0:18082` and add the LAN host or IP to `MAILBRIDGE_ALLOWED_HOSTS` and `MAILBRIDGE_ALLOWED_ORIGINS`.
 
 For internet exposure, use HTTPS behind a reverse proxy and set:
 
