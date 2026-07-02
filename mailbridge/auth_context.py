@@ -5,6 +5,7 @@ from typing import Any
 
 
 _mcp_user: ContextVar[dict[str, Any] | None] = ContextVar("mcp_user", default=None)
+_automation_token: ContextVar[dict[str, Any] | None] = ContextVar("automation_token", default=None)
 _mcp_request: ContextVar[dict[str, Any]] = ContextVar("mcp_request", default={})
 
 
@@ -18,6 +19,18 @@ def reset_mcp_user(token) -> None:
 
 def get_mcp_user() -> dict[str, Any] | None:
     return _mcp_user.get()
+
+
+def set_automation_token(token: dict[str, Any] | None):
+    return _automation_token.set(token)
+
+
+def reset_automation_token(token) -> None:
+    _automation_token.reset(token)
+
+
+def get_automation_token() -> dict[str, Any] | None:
+    return _automation_token.get()
 
 
 def set_mcp_request(meta: dict[str, Any]):

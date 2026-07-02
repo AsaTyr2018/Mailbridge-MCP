@@ -18,6 +18,7 @@ from .mcp_server import mcp
 from . import users
 from . import auth_context
 from . import syncops
+from . import automation
 
 
 mcp_app = mcp.streamable_http_app()
@@ -31,7 +32,6 @@ async def lifespan(app_: FastAPI):
 
 
 app = FastAPI(title="Mailbridge MCP", lifespan=lifespan)
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
 def csrf_token(request: Request) -> str:
@@ -42,8 +42,11 @@ def csrf_token(request: Request) -> str:
     return token
 
 
-def template_context(request: Request, **values: Any) -> dict[str, Any]:
-    return {"csrf_token": csrf_token(request), **values}
+def csrf_context(request: Request) -> dict[str, str]:
+    return {"csrf_token": csrf_token(request)}
+
+
+templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"), context_processors=[csrf_context])
 
 
 def request_remote_addr(request: Request) -> str:
@@ -57,11 +60,12 @@ def request_remote_addr(request: Request) -> str:
 
 
 async def mcp_request_meta(request: Request, user: dict[str, Any]) -> dict[str, Any]:
+    automation_token = getattr(request.state, "automation_token", None)
     meta: dict[str, Any] = {
         "remote_addr": request_remote_addr(request),
         "user_agent": request.headers.get("user-agent", ""),
         "path": request.url.path,
-        "token_id": user.get("mcp_token_id", ""),
+        "token_id": automation_token.get("token_id", "") if automation_token else user.get("mcp_token_id", ""),
         "started_at": time.perf_counter(),
     }
     content_type = request.headers.get("content-type", "")
@@ -98,21 +102,37 @@ async def auth_middleware(request: Request, call_next):
     if is_mcp_path:
         auth = request.headers.get("authorization", "")
         scheme, _, token = auth.partition(" ")
-        user = users.find_user_by_mcp_token(token if scheme.lower() == "bearer" else "")
+        bearer = token if scheme.lower() == "bearer" else ""
+        user = users.find_user_by_mcp_token(bearer)
+        automation_token = None
+        if not user:
+            automation_match = automation.find_user_by_automation_token(bearer)
+            if automation_match:
+                user, automation_token = automation_match
         if not user:
             return JSONResponse({"detail": "invalid MCP bearer token"}, status_code=401)
         request.state.mcp_user = user
+        request.state.automation_token = automation_token
         context_token = auth_context.set_mcp_user(user)
-        request_token = auth_context.set_mcp_request(await mcp_request_meta(request, user))
+        automation_context_token = auth_context.set_automation_token(automation_token)
+        request_meta = await mcp_request_meta(request, user)
+        if automation_token and request_meta.get("client_name", "") in {"", "mcp"}:
+            request_meta["client_name"] = f"mailbridge-automation:{automation_token.get('name', automation_token.get('token_id', 'unknown'))}"
+            request_meta["client_version"] = str(automation_token.get("token_id", ""))
+        request_token = auth_context.set_mcp_request(request_meta)
         try:
             return await call_next(request)
         finally:
             auth_context.reset_mcp_user(context_token)
+            auth_context.reset_automation_token(automation_context_token)
             auth_context.reset_mcp_request(request_token)
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and path not in {"/login", "/register"}:
-        form = await request.form()
-        submitted = str(form.get("csrf_token", ""))
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and path not in {"/login", "/register"} and not is_mcp_path:
         expected = request.cookies.get(users.CSRF_COOKIE, "")
+        if path.startswith("/api/"):
+            submitted = request.headers.get("x-csrf-token", "")
+        else:
+            form = await request.form()
+            submitted = str(form.get("csrf_token", ""))
         if not submitted or not expected or not hmac_compare(submitted, expected):
             return JSONResponse({"detail": "invalid CSRF token"}, status_code=403)
     public_paths = {"/healthz", "/login", "/register"}
@@ -169,10 +189,10 @@ def login_page(request: Request, notice: str | None = None):
     return templates.TemplateResponse(
         request,
         "login.html",
-        template_context(request,
-            notice=notice,
-            registration_enabled=users.registration_enabled() or users.user_count() == 0,
-        ),
+        {
+            "notice": notice,
+            "registration_enabled": users.registration_enabled() or users.user_count() == 0,
+        },
     )
 
 
@@ -198,7 +218,7 @@ def logout():
 def register_page(request: Request, notice: str | None = None):
     if not users.registration_enabled() and users.user_count() > 0:
         raise HTTPException(status_code=404, detail="registration disabled")
-    return templates.TemplateResponse(request, "register.html", template_context(request, notice=notice, first_user=users.user_count() == 0))
+    return templates.TemplateResponse(request, "register.html", {"notice": notice, "first_user": users.user_count() == 0})
 
 
 @app.post("/register")
@@ -213,14 +233,13 @@ async def register(request: Request):
     response = templates.TemplateResponse(
         request,
         "token_once.html",
-        template_context(
-            request,
-            user=user,
-            token=token,
-            title="User created",
-            message="Your personal MCP bearer token is shown once. Store it now.",
-            return_url="/",
-        ),
+        {
+            "user": user,
+            "token": token,
+            "title": "User created",
+            "message": "Your personal MCP bearer token is shown once. Store it now.",
+            "return_url": "/",
+        },
     )
     response.set_cookie(users.SESSION_COOKIE, users.make_session_token(int(user["id"])), httponly=True, samesite="lax", secure=settings.secure_cookies)
     return response
@@ -246,14 +265,42 @@ def index(request: Request, notice: str | None = None):
     return templates.TemplateResponse(
         request,
         "index.html",
-        template_context(request,
-            accounts=accounts,
-            message_count=message_count,
-            mcp_url=f"{settings.public_url.rstrip('/')}/mcp/",
-            bearer_security=mailops.bearer_security_summary(user=user),
-            notice=notice,
-            user=user,
-        ),
+        {
+            "accounts": accounts,
+            "message_count": message_count,
+            "mcp_url": f"{settings.public_url.rstrip('/')}/mcp/",
+            "bearer_security": mailops.bearer_security_summary(user=user),
+            "notice": notice,
+            "user": user,
+        },
+    )
+
+
+@app.get("/accounts", response_class=HTMLResponse)
+def accounts_page(request: Request, notice: str | None = None):
+    user = getattr(request.state, "user", None) or current_user(request)
+    return templates.TemplateResponse(
+        request,
+        "accounts.html",
+        {
+            "accounts": mailops.list_accounts(user=user),
+            "notice": notice,
+            "user": user,
+        },
+    )
+
+
+@app.get("/accounts/new", response_class=HTMLResponse)
+def new_account_page(request: Request, notice: str | None = None):
+    user = getattr(request.state, "user", None) or current_user(request)
+    return templates.TemplateResponse(
+        request,
+        "account_new.html",
+        {
+            "account": {},
+            "notice": notice,
+            "user": user,
+        },
     )
 
 
@@ -265,14 +312,13 @@ def renew_own_token(request: Request):
     return templates.TemplateResponse(
         request,
         "token_once.html",
-        template_context(
-            request,
-            user=refreshed_user,
-            token=token,
-            title="Bearer token renewed",
-            message="The previous MCP bearer token is invalid now. Existing Codex sessions using it will fail until updated.",
-            return_url="/",
-        ),
+        {
+            "user": refreshed_user,
+            "token": token,
+            "title": "Bearer token renewed",
+            "message": "The previous MCP bearer token is invalid now. Existing Codex sessions using it will fail until updated.",
+            "return_url": "/",
+        },
     )
 
 
@@ -282,7 +328,11 @@ def drafts_page(request: Request, notice: str | None = None):
     return templates.TemplateResponse(
         request,
         "drafts.html",
-        template_context(request, notice=notice, user=user, drafts=mailops.list_pending_drafts(user=user)),
+        {
+            "notice": notice,
+            "user": user,
+            "drafts": mailops.list_pending_drafts(user=user),
+        },
     )
 
 
@@ -292,7 +342,11 @@ def mail_history_page(request: Request, notice: str | None = None):
     return templates.TemplateResponse(
         request,
         "mail_history.html",
-        template_context(request, notice=notice, user=user, messages=mailops.list_mail_history(user=user)),
+        {
+            "notice": notice,
+            "user": user,
+            "messages": mailops.list_mail_history(user=user),
+        },
     )
 
 
@@ -302,7 +356,11 @@ def audit_page(request: Request, notice: str | None = None):
     return templates.TemplateResponse(
         request,
         "audit.html",
-        template_context(request, notice=notice, user=user, audit_rows=mailops.list_audit_events(user=user)),
+        {
+            "notice": notice,
+            "user": user,
+            "audit_rows": mailops.list_audit_events(user=user),
+        },
     )
 
 
@@ -312,7 +370,11 @@ def security_audit_page(request: Request, notice: str | None = None):
     return templates.TemplateResponse(
         request,
         "security_audit.html",
-        template_context(request, notice=notice, user=user, audit_rows=mailops.list_security_audit_events(user=user)),
+        {
+            "notice": notice,
+            "user": user,
+            "audit_rows": mailops.list_security_audit_events(user=user),
+        },
     )
 
 
@@ -367,7 +429,7 @@ async def create_account(request: Request):
         _validate_account_transport(account_data)
         account_id = mailops.create_account(account_data, user=user)
     except Exception as exc:
-        return RedirectResponse(f"/?notice=Create failed: {exc}", status_code=303)
+        return RedirectResponse(f"/accounts/new?notice=Create%20failed:%20{quote(str(exc))}", status_code=303)
     notice = "Account created"
     if _bool_form(data.get("autodiscover_sync_profiles")):
         try:
@@ -375,7 +437,7 @@ async def create_account(request: Request):
             notice = f"Account created. Sync autodiscovery created {len(result['created'])}, skipped {len(result['skipped'])}, failed {len(result['failed'])}"
         except Exception as exc:
             notice = f"Account created. Sync autodiscovery failed: {exc}"
-    return RedirectResponse(f"/?notice={quote(notice)}", status_code=303)
+    return RedirectResponse(f"/accounts?notice={quote(notice)}", status_code=303)
 
 
 def _validate_account_transport(data: dict[str, Any]) -> None:
@@ -402,13 +464,12 @@ def edit_account(request: Request, account_id: int, notice: str | None = None):
     return templates.TemplateResponse(
         request,
         "account.html",
-        template_context(
-            request,
-            account=account,
-            user=user,
-            notice=notice,
-            sync_profiles=syncops.list_sync_profiles(account_id, user=user),
-        ),
+        {
+            "account": account,
+            "user": user,
+            "notice": notice,
+            "sync_profiles": syncops.list_sync_profiles(account_id, user=user),
+        },
     )
 
 
@@ -419,41 +480,41 @@ async def update_account(request: Request, account_id: int):
     try:
         mailops.update_account(account_id, _account_form(dict(form)), user=user)
     except Exception as exc:
-        return RedirectResponse(f"/?notice=Update failed: {exc}", status_code=303)
-    return RedirectResponse("/?notice=Account updated", status_code=303)
+        return RedirectResponse(f"/accounts/{account_id}?notice=Update%20failed:%20{quote(str(exc))}", status_code=303)
+    return RedirectResponse(f"/accounts/{account_id}?notice=Account%20updated", status_code=303)
 
 
 @app.post("/accounts/{account_id}/delete")
 def delete_account_scoped(request: Request, account_id: int):
     mailops.delete_account(account_id, user=getattr(request.state, "user", None))
-    return RedirectResponse("/?notice=Account deleted", status_code=303)
+    return RedirectResponse("/accounts?notice=Account%20deleted", status_code=303)
 
 
 @app.post("/accounts/{account_id}/test-imap")
 def test_imap(request: Request, account_id: int):
     try:
         result = mailops.test_imap(account_id, user=getattr(request.state, "user", None))
-        return RedirectResponse(f"/?notice=IMAP test ok: {result}", status_code=303)
+        return RedirectResponse(f"/accounts?notice=IMAP%20test%20ok:%20{quote(str(result))}", status_code=303)
     except Exception as exc:
-        return RedirectResponse(f"/?notice=IMAP test failed: {exc}", status_code=303)
+        return RedirectResponse(f"/accounts?notice=IMAP%20test%20failed:%20{quote(str(exc))}", status_code=303)
 
 
 @app.post("/accounts/{account_id}/test-smtp")
 def test_smtp(request: Request, account_id: int):
     try:
         result = mailops.test_smtp(account_id, user=getattr(request.state, "user", None))
-        return RedirectResponse(f"/?notice=SMTP test ok: {result}", status_code=303)
+        return RedirectResponse(f"/accounts?notice=SMTP%20test%20ok:%20{quote(str(result))}", status_code=303)
     except Exception as exc:
-        return RedirectResponse(f"/?notice=SMTP test failed: {exc}", status_code=303)
+        return RedirectResponse(f"/accounts?notice=SMTP%20test%20failed:%20{quote(str(exc))}", status_code=303)
 
 
 @app.post("/accounts/{account_id}/maintenance/resync")
 def maintenance_resync(request: Request, account_id: int):
     try:
         result = mailops.sync_account(account_id, limit=100, user=getattr(request.state, "user", None))
-        return RedirectResponse(f"/?notice=Resync ok: indexed {result['indexed']}", status_code=303)
+        return RedirectResponse(f"/accounts?notice=Resync%20ok:%20indexed%20{quote(str(result['indexed']))}", status_code=303)
     except Exception as exc:
-        return RedirectResponse(f"/?notice=Resync failed: {exc}", status_code=303)
+        return RedirectResponse(f"/accounts?notice=Resync%20failed:%20{quote(str(exc))}", status_code=303)
 
 
 @app.post("/accounts/{account_id}/sync-profiles")
@@ -548,6 +609,33 @@ def api_accounts(request: Request):
     return mailops.list_accounts(user=getattr(request.state, "user", None))
 
 
+@app.post("/api/accounts/autodiscover")
+async def api_account_autodiscover(request: Request):
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        payload = await request.json()
+    else:
+        payload = dict(await request.form())
+    email_address = str(payload.get("email_address", "")).strip()
+    password = str(payload.get("password", ""))
+    try:
+        discovered = mailops.autodiscover_account_settings(email_address, password)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    fields = [
+        "email_address",
+        "imap_host",
+        "imap_port",
+        "imap_tls_mode",
+        "imap_username",
+        "smtp_host",
+        "smtp_port",
+        "smtp_tls_mode",
+        "smtp_username",
+    ]
+    return {"ok": True, "settings": {key: discovered[key] for key in fields}}
+
+
 @app.get("/api/accounts/{account_id}/sync-status")
 def api_sync_status(request: Request, account_id: int):
     user = getattr(request.state, "user", None)
@@ -572,12 +660,12 @@ def admin_page(request: Request, notice: str | None = None):
     return templates.TemplateResponse(
         request,
         "admin.html",
-        template_context(request,
-            notice=notice,
-            user=getattr(request.state, "user", None),
-            users=users.list_users(),
-            registration_enabled=users.registration_enabled(),
-        ),
+        {
+            "notice": notice,
+            "user": getattr(request.state, "user", None),
+            "users": users.list_users(),
+            "registration_enabled": users.registration_enabled(),
+        },
     )
 
 
@@ -613,14 +701,13 @@ def admin_revoke_token(request: Request, user_id: int):
     return templates.TemplateResponse(
         request,
         "token_once.html",
-        template_context(
-            request,
-            user=getattr(request.state, "user", None),
-            token=token,
-            title=f"Bearer token renewed for {target_user['username'] if target_user else user_id}",
-            message="The previous MCP bearer token is invalid now. Share this token through a secure channel.",
-            return_url="/admin",
-        ),
+        {
+            "user": getattr(request.state, "user", None),
+            "token": token,
+            "title": f"Bearer token renewed for {target_user['username'] if target_user else user_id}",
+            "message": "The previous MCP bearer token is invalid now. Share this token through a secure channel.",
+            "return_url": "/admin",
+        },
     )
 
 

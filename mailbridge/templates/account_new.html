@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="shell">
+    {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Add Account</h2>
+          <div class="muted">Add a mail account with autodiscovery first, manual transport settings only if needed.</div>
+        </div>
+      </div>
+      {% include "account_form.html" %}
+    </section>
+  </div>
+{% endblock %}

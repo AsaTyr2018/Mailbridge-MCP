@@ -1,5 +1,6 @@
 {% set account = account|default({}) %}
-<form method="post" action="{{ '/accounts/' ~ account.id if account.id else '/accounts' }}">
+{% set is_new = not account.id %}
+<form method="post" action="{{ '/accounts/' ~ account.id if account.id else '/accounts' }}" data-account-form>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <div class="grid">
     <div>
@@ -14,6 +15,12 @@
       <label>Display name</label>
       <input name="display_name" value="{{ account.display_name or '' }}">
     </div>
+    {% if is_new %}
+      <div>
+        <label>Mail password</label>
+        <input name="autodiscover_password" type="password" autocomplete="current-password" data-autodiscover-password>
+      </div>
+    {% endif %}
     <div>
       <label>Sync folders</label>
       <input name="sync_folders" value="{{ account.sync_folders or 'INBOX' }}">
@@ -28,46 +35,59 @@
     </div>
   </div>
 
-  {% if not account.id %}
-    <h3>Autodiscovery</h3>
+  {% if is_new %}
+    <input type="hidden" name="autodiscover_account" value="false">
+    <div class="autodiscover-box">
+      <div>
+        <h3>Autodiscovery</h3>
+        <p class="muted">Enter email address and password, then detect IMAP/SMTP. If detection fails, open advanced settings and enter the values manually.</p>
+      </div>
+      <div class="actions">
+        <button type="button" class="secondary" data-autodiscover-button disabled>Autodiscover</button>
+      </div>
+      <div class="autodiscover-status muted" data-autodiscover-status></div>
+    </div>
     <div class="checkboxes">
-      <label><input type="checkbox" name="autodiscover_account" checked>Detect IMAP/SMTP from email and password</label>
       <label><input type="checkbox" name="autodiscover_sync_profiles" checked>Detect contacts and calendar after save</label>
     </div>
-    <p class="muted">For autodiscovery, enter email address and the mail password below. IMAP/SMTP fields can stay empty.</p>
   {% endif %}
 
-  <h3>IMAP</h3>
-  <div class="grid">
-    <div><label>Host</label><input name="imap_host" {% if account.id %}required{% endif %} value="{{ account.imap_host or '' }}"></div>
-    <div><label>Port</label><input name="imap_port" type="number" value="{{ account.imap_port or 993 }}"></div>
-    <div>
-      <label>TLS</label>
-      <select name="imap_tls_mode">
-        {% for mode in ["ssl", "starttls", "none"] %}
-          <option value="{{ mode }}" {% if (account.imap_tls_mode or 'ssl') == mode %}selected{% endif %}>{{ mode }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div><label>Username</label><input name="imap_username" {% if account.id %}required{% endif %} value="{{ account.imap_username or '' }}"></div>
-    <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="imap_password" type="password"></div>
-  </div>
+  <details class="advanced-settings" data-advanced-settings {% if account.id %}open{% endif %}>
+    <summary>Advanced IMAP/SMTP settings</summary>
+    <div class="advanced-settings-body">
+      <h3>IMAP</h3>
+      <div class="grid">
+        <div><label>Host</label><input name="imap_host" {% if account.id %}required{% endif %} value="{{ account.imap_host or '' }}"></div>
+        <div><label>Port</label><input name="imap_port" type="number" value="{{ account.imap_port or 993 }}"></div>
+        <div>
+          <label>TLS</label>
+          <select name="imap_tls_mode">
+            {% for mode in ["ssl", "starttls", "none"] %}
+              <option value="{{ mode }}" {% if (account.imap_tls_mode or 'ssl') == mode %}selected{% endif %}>{{ mode }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div><label>Username</label><input name="imap_username" {% if account.id %}required{% endif %} value="{{ account.imap_username or '' }}"></div>
+        <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="imap_password" type="password" autocomplete="current-password"></div>
+      </div>
 
-  <h3>SMTP</h3>
-  <div class="grid">
-    <div><label>Host</label><input name="smtp_host" {% if account.id %}required{% endif %} value="{{ account.smtp_host or '' }}"></div>
-    <div><label>Port</label><input name="smtp_port" type="number" value="{{ account.smtp_port or 587 }}"></div>
-    <div>
-      <label>TLS</label>
-      <select name="smtp_tls_mode">
-        {% for mode in ["starttls", "ssl", "none"] %}
-          <option value="{{ mode }}" {% if (account.smtp_tls_mode or 'starttls') == mode %}selected{% endif %}>{{ mode }}</option>
-        {% endfor %}
-      </select>
+      <h3>SMTP</h3>
+      <div class="grid">
+        <div><label>Host</label><input name="smtp_host" {% if account.id %}required{% endif %} value="{{ account.smtp_host or '' }}"></div>
+        <div><label>Port</label><input name="smtp_port" type="number" value="{{ account.smtp_port or 587 }}"></div>
+        <div>
+          <label>TLS</label>
+          <select name="smtp_tls_mode">
+            {% for mode in ["starttls", "ssl", "none"] %}
+              <option value="{{ mode }}" {% if (account.smtp_tls_mode or 'starttls') == mode %}selected{% endif %}>{{ mode }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div><label>Username</label><input name="smtp_username" {% if account.id %}required{% endif %} value="{{ account.smtp_username or '' }}"></div>
+        <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="smtp_password" type="password" autocomplete="current-password"></div>
+      </div>
     </div>
-    <div><label>Username</label><input name="smtp_username" {% if account.id %}required{% endif %} value="{{ account.smtp_username or '' }}"></div>
-    <div><label>Password{% if account.id %} (leave blank to keep){% endif %}</label><input name="smtp_password" type="password"></div>
-  </div>
+  </details>
 
   <h3>MCP Policy</h3>
   <div class="checkboxes">
@@ -97,6 +117,72 @@
 
   <div class="actions" style="margin-top: 16px;">
     <button>Save</button>
-    <a class="button secondary" href="/">Cancel</a>
+    <a class="button secondary" href="/accounts">Cancel</a>
   </div>
 </form>
+
+{% if is_new %}
+  <script>
+    (() => {
+      const form = document.querySelector("[data-account-form]");
+      if (!form) return;
+      const email = form.querySelector('input[name="email_address"]');
+      const password = form.querySelector("[data-autodiscover-password]");
+      const button = form.querySelector("[data-autodiscover-button]");
+      const status = form.querySelector("[data-autodiscover-status]");
+      const advanced = form.querySelector("[data-advanced-settings]");
+      const setField = (name, value) => {
+        const field = form.querySelector(`[name="${name}"]`);
+        if (field) field.value = value ?? "";
+      };
+      const setStatus = (message, state) => {
+        status.textContent = message;
+        status.dataset.state = state || "";
+      };
+      const updateButton = () => {
+        button.disabled = !(email.value.trim() && password.value);
+      };
+      email.addEventListener("input", () => {
+        setStatus("", "");
+        updateButton();
+      });
+      password.addEventListener("input", () => {
+        setStatus("", "");
+        updateButton();
+      });
+      button.addEventListener("click", async () => {
+        updateButton();
+        if (button.disabled) return;
+        button.disabled = true;
+        setStatus("Autodiscovery is running...", "loading");
+        try {
+          const response = await fetch("/api/accounts/autodiscover", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": "{{ csrf_token }}" },
+            body: JSON.stringify({ email_address: email.value.trim(), password: password.value }),
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) throw new Error(payload.error || "Autodiscovery failed");
+          const settings = payload.settings;
+          setField("imap_host", settings.imap_host);
+          setField("imap_port", settings.imap_port);
+          setField("imap_tls_mode", settings.imap_tls_mode);
+          setField("imap_username", settings.imap_username);
+          setField("imap_password", password.value);
+          setField("smtp_host", settings.smtp_host);
+          setField("smtp_port", settings.smtp_port);
+          setField("smtp_tls_mode", settings.smtp_tls_mode);
+          setField("smtp_username", settings.smtp_username);
+          setField("smtp_password", password.value);
+          setStatus("Autodiscovery complete. IMAP and SMTP settings were filled automatically.", "ok");
+        } catch (error) {
+          if (advanced) advanced.open = true;
+          setStatus(`${error.message}. Please enter IMAP/SMTP settings manually.`, "error");
+        } finally {
+          updateButton();
+        }
+      });
+      updateButton();
+    })();
+  </script>
+{% endif %}

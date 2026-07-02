@@ -842,6 +842,94 @@ def get_message(message_id: int, user: dict[str, Any] | None = None) -> dict[str
     return result
 
 
+def move_messages(
+    account_id: int,
+    message_ids: list[int],
+    target_folder: str,
+    *,
+    source_folder: str = "",
+    user: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    account = get_account(account_id, include_secret=True, user=user)
+    if not account:
+        raise ValueError("account not found")
+    target_folder = target_folder.strip()
+    if not target_folder:
+        raise ValueError("target_folder is required")
+    safe_ids = sorted({int(message_id) for message_id in message_ids if int(message_id) > 0})
+    if not safe_ids:
+        return {"ok": True, "account_id": account_id, "target_folder": target_folder, "moved": [], "skipped": [], "errors": []}
+    placeholders = ",".join("?" for _ in safe_ids)
+    params: list[Any] = [account_id, *safe_ids]
+    where = f"account_id = ? AND id IN ({placeholders})"
+    if source_folder.strip():
+        where += " AND lower(folder) = ?"
+        params.append(source_folder.strip().lower())
+    with db() as conn:
+        rows = conn.execute(f"SELECT id, folder, imap_uid, subject FROM messages WHERE {where}", params).fetchall()
+    rows_by_id = {int(row["id"]): dict(row) for row in rows}
+    skipped = [{"message_id": message_id, "reason": "not found or source folder mismatch"} for message_id in safe_ids if message_id not in rows_by_id]
+    moved: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    by_folder: dict[str, list[dict[str, Any]]] = {}
+    for row in rows_by_id.values():
+        by_folder.setdefault(str(row["folder"]), []).append(row)
+    client = _imap_connect(account)
+    try:
+        try:
+            client.create(target_folder)
+        except Exception:
+            pass
+        for folder, folder_rows in by_folder.items():
+            status, _ = client.select(folder, readonly=False)
+            if status != "OK":
+                errors.extend({"message_id": int(row["id"]), "error": f"folder not selectable: {folder}"} for row in folder_rows)
+                continue
+            for row in folder_rows:
+                uid = str(row["imap_uid"])
+                message_id = int(row["id"])
+                try:
+                    status, _ = client.uid("MOVE", uid.encode("ascii"), target_folder)
+                    if status != "OK":
+                        status, _ = client.uid("COPY", uid.encode("ascii"), target_folder)
+                        if status != "OK":
+                            raise ValueError("IMAP copy failed")
+                        status, _ = client.uid("STORE", uid.encode("ascii"), "+FLAGS.SILENT", r"(\Deleted)")
+                        if status != "OK":
+                            raise ValueError("IMAP delete flag failed after copy")
+                        client.expunge()
+                    with db() as conn:
+                        conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+                    moved.append({"message_id": message_id, "from": folder, "to": target_folder, "subject": row.get("subject", "")})
+                except Exception as exc:
+                    errors.append({"message_id": message_id, "error": str(exc)})
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+    status = "ok" if not errors else "partial"
+    audit(
+        actor_type="mcp_client",
+        actor_id=str(user["id"] if user else "codex"),
+        interface="mcp",
+        action="move_messages",
+        status=status,
+        account_id=account_id,
+        target_resource=",".join(str(item["message_id"]) for item in moved),
+        error_message=json.dumps(errors)[:500] if errors else "",
+    )
+    return {
+        "ok": not errors,
+        "status": status,
+        "account_id": account_id,
+        "target_folder": target_folder,
+        "moved": moved,
+        "skipped": skipped,
+        "errors": errors,
+    }
+
+
 def create_draft(account_id: int, to_recipients: str, subject: str, body_text: str, cc_recipients: str = "", bcc_recipients: str = "", in_reply_to_message_id: int | None = None, user: dict[str, Any] | None = None) -> dict[str, Any]:
     account = get_account(account_id, user=user)
     if not account or not account["mcp_draft_enabled"]:

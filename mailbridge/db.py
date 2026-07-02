@@ -248,6 +248,26 @@ def migrate() -> None:
                 value TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS automation_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                token_secret TEXT NOT NULL DEFAULT '',
+                token_id TEXT NOT NULL UNIQUE,
+                token_preview TEXT NOT NULL,
+                permissions TEXT NOT NULL DEFAULT '[]',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS automation_token_accounts (
+                token_id INTEGER NOT NULL REFERENCES automation_tokens(id) ON DELETE CASCADE,
+                account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                PRIMARY KEY (token_id, account_id)
+            );
+
             INSERT OR IGNORE INTO app_settings (key, value)
             VALUES ('registration_enabled', 'true');
 
@@ -292,3 +312,5 @@ def migrate() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS sync_profiles_account_idx ON sync_profiles(account_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS contacts_account_name_idx ON contacts(account_id, display_name)")
         conn.execute("CREATE INDEX IF NOT EXISTS calendar_events_account_time_idx ON calendar_events(account_id, starts_at, ends_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS automation_tokens_owner_idx ON automation_tokens(owner_user_id, enabled)")
+        conn.execute("CREATE INDEX IF NOT EXISTS automation_token_accounts_account_idx ON automation_token_accounts(account_id)")

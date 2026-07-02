@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Add user-scoped automation tokens for personal automation clients such as MCP-MASH.
+- Add automation permission and account scoping for MCP calls.
+- Add `move_messages` for mailbox rule automation.
+- Add explicit automation-client audit attribution and token IDs.
+- Split the web UI into Dashboard, Accounts, and Add Account pages.
+- Refine Add Account with email/password autodiscovery and collapsed advanced IMAP/SMTP settings.
+
 ## 0.2.0
 
 - Add CardDAV, CalDAV, and ActiveSync-backed contact/calendar sync profiles.

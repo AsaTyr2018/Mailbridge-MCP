@@ -268,6 +268,44 @@
         color: var(--soft);
       }
       .checkboxes input { width: auto; }
+      .autodiscover-box {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: start;
+        margin-top: 16px;
+        margin-bottom: 14px;
+        padding: 14px;
+        background: #0a0d13;
+        border: 1px solid var(--line);
+      }
+      .autodiscover-box h3 { margin-top: 0; }
+      .autodiscover-status {
+        grid-column: 1 / -1;
+        min-height: 20px;
+      }
+      .autodiscover-status[data-state="ok"] { color: var(--ok); }
+      .autodiscover-status[data-state="error"] { color: var(--danger); }
+      .advanced-settings {
+        margin-top: 16px;
+        border: 1px solid var(--line);
+        background: #0a0d13;
+      }
+      .advanced-settings summary {
+        display: flex;
+        align-items: center;
+        min-height: 42px;
+        padding: 0 13px;
+        color: var(--soft);
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 760;
+      }
+      .advanced-settings summary::marker { color: var(--accent-strong); }
+      .advanced-settings-body {
+        border-top: 1px solid var(--line);
+        padding: 16px;
+      }
       code {
         display: inline-block;
         max-width: 100%;
@@ -296,7 +334,8 @@
       <div>Account administration and policy surface for Codex mail automation</div>
       {% if user %}
         <nav class="actions">
-          <a class="button secondary" href="/">Accounts</a>
+          <a class="button secondary" href="/">Dashboard</a>
+          <a class="button secondary" href="/accounts">Accounts</a>
           <a class="button secondary" href="/drafts">Queue</a>
           <a class="button secondary" href="/mail-history">Mail History</a>
           <a class="button secondary" href="/audit">Audit</a>

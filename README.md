@@ -24,6 +24,7 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Multiuser login with no default user.
 - First registered user becomes admin.
 - Per-user MCP bearer tokens and Token IDs.
+- Per-user automation tokens for personal automation clients such as MCP-MASH.
 - User-owned mail accounts.
 - IMAP sync and SQLite FTS indexing.
 - Privacy-aware mail index modes: `metadata_only`, `headers`, and `full_text`.
@@ -39,13 +40,16 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Security Audit for MCP token usage.
 - User-scoped audit views; admins can inspect global usage.
 - Admin menu for registration on/off and user lock/delete/token renew.
+- Automation-scoped `move_messages` support for account-local mailbox rules.
 - Gmail-style search operators such as `from:`, `to:`, `subject:`, `newer_than:`, `after:`, `has:attachment`, `filename:`, `larger:`.
 
 ## Web UI
 
 The web UI provides these operational pages:
 
-- `Accounts`: runtime status, account list, hidden Add Account form, token renewal, Bearer Security summary.
+- `Dashboard`: runtime status, MCP URL, token renewal, Bearer Security summary.
+- `Accounts`: account list and account actions.
+- `Add Account`: guided account creation with email/password autodiscovery and collapsed advanced IMAP/SMTP settings.
 - `Queue`: pending MCP-created drafts. No approve/reject buttons are shown here.
 - `Mail History`: recent indexed mail metadata.
 - `Audit`: user-scoped web and MCP actions.
@@ -122,8 +126,22 @@ enabled = true
 - `create_draft`
 - `list_drafts`
 - `send_draft`
+- `create_automation_token`
+- `list_automation_tokens`
+- `revoke_automation_token`
+- `move_messages`
 
 Calendar/contact tools read normalized local data from configured sync profiles. CardDAV and CalDAV profiles perform direct DAV item sync. ActiveSync profiles perform the ActiveSync handshake and folder discovery first; for Mailcow/SOGo-style servers, discovered `vcard` and `vevent` collections are mapped to the matching DAV collections and imported into the same local indexes.
+
+## Automation Tokens
+
+Automation tokens are user-scoped MCP bearer tokens for personal automation clients such as MCP-MASH.
+
+They are not global service tokens. Each automation token belongs to one Mailbridge user, can only see that user's allowed accounts, and carries an explicit permission list such as `list_accounts`, `sync`, `search`, `read`, `move`, `trash`, `mark_read`, `draft`, or `send`.
+
+Mailbridge records automation-token calls in the normal MCP security audit with the token ID and MCP client name. Clients should set a clear MCP `clientInfo.name`, for example `mcp-mash`, so audit rows distinguish autonomous automation from interactive clients such as Codex.
+
+Automation token creation tools return the full token once. The token is not returned again later.
 
 ## Contact And Calendar Sync
 
