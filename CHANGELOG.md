@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3
+
+- Add scoped automation send consents for approved autonomous sends.
+- Add MCP tools to list, create, and revoke automation consents.
+- Enforce automation consent account, recipient/domain, expiry, and daily send-limit checks in `send_draft`.
+- Keep automation tokens read-only for consent management so personal user approval is required to grant send consent.
+
 ## 0.3.2
 
 - Add MCP draft management tools: `get_draft`, `approve_draft`, `reject_draft`, and `delete_draft`.

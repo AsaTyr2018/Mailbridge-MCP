@@ -7,6 +7,7 @@ import re
 import socket
 import smtplib
 import ssl
+from datetime import datetime, timezone
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -1237,6 +1238,76 @@ def list_pending_drafts(user: dict[str, Any] | None = None) -> list[dict[str, An
     return [dict(row) for row in rows]
 
 
+def list_automation_consents(account_id: int | None = None, user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    params: list[Any] = []
+    where = []
+    if account_id is not None:
+        if not get_account(int(account_id), user=user):
+            raise ValueError("account not found")
+        where.append("c.account_id = ?")
+        params.append(int(account_id))
+    if user and not user.get("is_admin"):
+        where.append("a.owner_user_id = ?")
+        params.append(user["id"])
+    query = """
+        SELECT c.*, a.name AS account_name, a.email_address AS account_email
+        FROM automation_consents c
+        JOIN accounts a ON a.id = c.account_id
+    """
+    if where:
+        query += " WHERE " + " AND ".join(where)
+    query += " ORDER BY c.created_at DESC"
+    with db() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
+
+
+def create_automation_consent(
+    account_id: int,
+    name: str,
+    allowed_recipients: str = "",
+    allowed_domains: str = "",
+    max_sends_per_day: int = 0,
+    expires_at: str = "",
+    user: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    account = get_account(account_id, user=user)
+    if not account:
+        raise ValueError("account not found")
+    if not name.strip():
+        raise ValueError("consent name is required")
+    if not allowed_recipients.strip() and not allowed_domains.strip():
+        raise ValueError("automation consent requires allowed_recipients or allowed_domains")
+    with db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO automation_consents (
+                account_id, name, allowed_recipients, allowed_domains,
+                max_sends_per_day, expires_at, enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, 1)
+            """,
+            (
+                account_id,
+                name.strip(),
+                allowed_recipients.strip(),
+                allowed_domains.strip(),
+                max(0, int(max_sends_per_day or 0)),
+                expires_at.strip() or None,
+            ),
+        )
+        consent_id = int(cur.lastrowid)
+    audit(actor_type="mcp_client" if user else "human", actor_id=str(user["id"] if user else "admin"), interface="mcp" if user else "http", action="automation_consent_create", status="ok", account_id=account_id, target_resource=str(consent_id))
+    return _get_automation_consent(consent_id, user=user)
+
+
+def revoke_automation_consent(consent_id: int, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    consent = _get_automation_consent(consent_id, user=user)
+    with db() as conn:
+        conn.execute("UPDATE automation_consents SET enabled = 0 WHERE id = ?", (consent_id,))
+    audit(actor_type="mcp_client" if user else "human", actor_id=str(user["id"] if user else "admin"), interface="mcp" if user else "http", action="automation_consent_revoke", status="ok", account_id=int(consent["account_id"]), target_resource=str(consent_id))
+    return _get_automation_consent(consent_id, user=user)
+
+
 def list_mail_history(user: dict[str, Any] | None = None, *, limit: int = 100) -> list[dict[str, Any]]:
     safe_limit = max(1, min(limit, 200))
     with db() as conn:
@@ -1544,6 +1615,72 @@ def _domain_allowed(account: dict[str, Any], recipients: list[str]) -> tuple[boo
     return True, "ok"
 
 
+def _get_automation_consent(consent_id: int, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    with db() as conn:
+        if user and not user.get("is_admin"):
+            row = conn.execute(
+                """
+                SELECT c.*
+                FROM automation_consents c
+                JOIN accounts a ON a.id = c.account_id
+                WHERE c.id = ? AND a.owner_user_id = ?
+                """,
+                (consent_id, user["id"]),
+            ).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM automation_consents WHERE id = ?", (consent_id,)).fetchone()
+    if not row:
+        raise ValueError("automation consent not found")
+    return dict(row)
+
+
+def _split_csv(value: str) -> set[str]:
+    return {item.strip().lower() for item in str(value or "").split(",") if item.strip()}
+
+
+def _automation_consent_allowed(consent_id: int, account_id: int, recipients: list[str], user: dict[str, Any] | None = None) -> tuple[bool, str]:
+    consent = _get_automation_consent(consent_id, user=user)
+    if int(consent["account_id"]) != int(account_id):
+        return False, "automation consent does not belong to draft account"
+    if not int(consent["enabled"]):
+        return False, "automation consent is disabled"
+    expires_at = str(consent.get("expires_at") or "")
+    if expires_at:
+        try:
+            expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) > expires.astimezone(timezone.utc):
+                return False, "automation consent has expired"
+        except ValueError:
+            return False, "automation consent has invalid expires_at"
+    allowed_recipients = _split_csv(str(consent.get("allowed_recipients") or ""))
+    allowed_domains = _split_csv(str(consent.get("allowed_domains") or ""))
+    for recipient in recipients:
+        normalized = recipient.lower()
+        domain = normalized.rsplit("@", 1)[-1]
+        if normalized not in allowed_recipients and domain not in allowed_domains:
+            return False, f"recipient not covered by automation consent: {recipient}"
+    max_sends = int(consent.get("max_sends_per_day") or 0)
+    if max_sends > 0:
+        with db() as conn:
+            count = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM audit_log
+                WHERE action = 'send_draft'
+                  AND status = 'ok'
+                  AND account_id = ?
+                  AND policy_decision = ?
+                  AND date(created_at) = date('now')
+                """,
+                (account_id, f"consent:{consent_id}"),
+            ).fetchone()["count"]
+        if int(count) >= max_sends:
+            return False, "automation consent daily send limit reached"
+    return True, "ok"
+
+
 def _parse_recipients(*fields: str) -> list[str]:
     recipients: list[str] = []
     seen: set[str] = set()
@@ -1590,6 +1727,10 @@ def send_draft(draft_id: int, *, interactive_ok: bool = False, automation_consen
         }
     if mode == "approved_automation_only" and automation_consent_id is None:
         raise ValueError("automation consent required")
+    if automation_consent_id is not None:
+        allowed_by_consent, consent_reason = _automation_consent_allowed(automation_consent_id, int(draft["account_id"]), recipients, user=user)
+        if not allowed_by_consent:
+            raise ValueError(consent_reason)
     if draft["status"] != "approved" and not interactive_ok and automation_consent_id is None:
         raise ValueError("draft is not approved")
 

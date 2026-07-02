@@ -144,6 +144,9 @@ enabled = true
 - `reject_draft`
 - `delete_draft`
 - `send_draft`
+- `list_automation_consents`
+- `create_automation_consent`
+- `revoke_automation_consent`
 - `create_automation_token`
 - `list_automation_tokens`
 - `revoke_automation_token`
@@ -161,6 +164,31 @@ Draft tools are intentionally split:
 - `send_draft` still enforces the account send policy. Interactive policies return a preview and require a second call with explicit OK.
 
 `create_forward_draft` can optionally copy original message attachments into the draft using attachment indices, filenames, or `include_attachments=true`. Stored draft attachments are included in the `send_draft` approval preview and are attached to the SMTP message when the draft is sent.
+
+## Automation Send Consents
+
+Accounts with `mcp_send_mode=interactive_or_approved_automation` or `approved_automation_only` can use scoped automation consents for repeat sends without interactive OK.
+
+Automation consents are not bearer tokens. They are account-local send-policy records that restrict autonomous sends by recipient and/or domain, optional expiry, and optional daily send limit.
+
+Consent tools:
+
+- `list_automation_consents`
+- `create_automation_consent`
+- `revoke_automation_consent`
+
+Creating or revoking consents requires a personal user MCP token. Automation tokens, including MCP-MASH tokens, may inspect existing consents but cannot grant themselves send approval.
+
+Example consent for a bot-mailer account:
+
+```text
+account_id: 1
+name: MASH weekly reports
+allowed_recipients: hauke@example.com
+max_sends_per_day: 5
+```
+
+MCP-MASH can then call `send_draft` with that `automation_consent_id`. Mailbridge verifies the draft account, recipients, domains, expiry, and daily limit before sending.
 
 ## Automation Tokens
 

@@ -438,6 +438,56 @@ def send_draft(draft_id: int, interactive_ok: bool = False, automation_consent_i
 
 
 @mcp.tool()
+def list_automation_consents(account_id: int | None = None) -> list[dict[str, Any]]:
+    """List scoped send consents for the current user. Automation tokens may only inspect existing consents."""
+    user = get_mcp_user()
+    if account_id is not None:
+        _require("send", account_id)
+    else:
+        _require("send")
+    return mailops.list_automation_consents(account_id=account_id, user=user)
+
+
+@mcp.tool()
+def create_automation_consent(
+    account_id: int,
+    name: str,
+    allowed_recipients: str = "",
+    allowed_domains: str = "",
+    max_sends_per_day: int = 0,
+    expires_at: str = "",
+) -> dict[str, Any]:
+    """Create a scoped consent for approved automation sends. Requires a personal user token, not an automation token."""
+    if get_automation_token():
+        raise PermissionError("automation tokens cannot create automation consents")
+    user = get_mcp_user()
+    _require("send", account_id)
+    return mailops.create_automation_consent(
+        account_id,
+        name=name,
+        allowed_recipients=allowed_recipients,
+        allowed_domains=allowed_domains,
+        max_sends_per_day=max_sends_per_day,
+        expires_at=expires_at,
+        user=user,
+    )
+
+
+@mcp.tool()
+def revoke_automation_consent(consent_id: int) -> dict[str, Any]:
+    """Disable an automation send consent. Requires a personal user token, not an automation token."""
+    if get_automation_token():
+        raise PermissionError("automation tokens cannot revoke automation consents")
+    user = get_mcp_user()
+    matching = [item for item in mailops.list_automation_consents(user=user) if int(item["id"]) == int(consent_id)]
+    if not matching:
+        raise ValueError("automation consent not found")
+    _require("send", int(matching[0]["account_id"]))
+    consent = mailops.revoke_automation_consent(consent_id, user=user)
+    return consent
+
+
+@mcp.tool()
 def create_automation_token(name: str, account_names: list[str], permissions: list[str] | None = None) -> dict[str, Any]:
     """Create a user-scoped automation token for MASH or another personal automation client. The token is shown once."""
     user = get_mcp_user()
