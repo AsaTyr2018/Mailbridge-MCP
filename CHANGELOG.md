@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.3.2
+
+- Add MCP draft management tools: `get_draft`, `approve_draft`, `reject_draft`, and `delete_draft`.
+- Require `user_ok=true` for MCP draft approval after the client has shown the draft content to the user.
+- Add persisted draft attachments for forward drafts and send them through SMTP with `send_draft`.
+- Include draft attachment metadata in send approval previews.
+
+## 0.3.1
 
 - Document MCP-MASH as the companion Mail Automation Script Host add-on for user-scoped automation tokens.
 - Add MCP tools for listing/reading message attachments with size-capped base64 output.

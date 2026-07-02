@@ -35,6 +35,8 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Mail history page for indexed message metadata.
 - Draft queue page without web approval buttons; approval is handled through the MCP policy flow.
 - SMTP draft/send flow with guarded send policies.
+- MCP draft management for reviewing, approving, rejecting, deleting, and sending drafts.
+- Forward drafts can copy selected original message attachments into the draft and send them later.
 - Interactive sends require displaying final content and active user `ok`.
 - Dashboard Bearer Security summary with last use, client, IP, action, and status.
 - Security Audit for MCP token usage.
@@ -137,6 +139,10 @@ enabled = true
 - `create_draft`
 - `create_forward_draft`
 - `list_drafts`
+- `get_draft`
+- `approve_draft`
+- `reject_draft`
+- `delete_draft`
 - `send_draft`
 - `create_automation_token`
 - `list_automation_tokens`
@@ -144,6 +150,17 @@ enabled = true
 - `move_messages`
 
 Calendar/contact tools read normalized local data from configured sync profiles. CardDAV and CalDAV profiles perform direct DAV item sync. ActiveSync profiles perform the ActiveSync handshake and folder discovery first; for Mailcow/SOGo-style servers, discovered `vcard` and `vevent` collections are mapped to the matching DAV collections and imported into the same local indexes.
+
+Draft tools are intentionally split:
+
+- `list_drafts` lists recent drafts visible to the bearer-token user.
+- `get_draft` returns one draft with body text and attachment metadata so the MCP client can show it to the user.
+- `approve_draft` requires `user_ok=true` and should only be called after the user has seen and approved the draft content.
+- `reject_draft` marks a draft as rejected so it cannot be sent later.
+- `delete_draft` removes an unsent draft and stored draft attachments.
+- `send_draft` still enforces the account send policy. Interactive policies return a preview and require a second call with explicit OK.
+
+`create_forward_draft` can optionally copy original message attachments into the draft using attachment indices, filenames, or `include_attachments=true`. Stored draft attachments are included in the `send_draft` approval preview and are attached to the SMTP message when the draft is sent.
 
 ## Automation Tokens
 

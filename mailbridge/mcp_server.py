@@ -349,13 +349,30 @@ def create_forward_draft(
     note: str = "",
     cc_recipients: str = "",
     bcc_recipients: str = "",
+    subject: str = "",
+    attachment_indices: list[int] | None = None,
+    attachment_filenames: list[str] | None = None,
+    include_attachments: bool = False,
 ) -> dict[str, Any]:
     """Create a forward draft for one message. Sending still uses send_draft policy."""
     account_id = _message_account_id(message_id)
     _require("read", account_id)
     _require("draft", account_id)
     _require("forward", account_id)
-    return mailops.create_forward_draft(message_id, to_recipients, note=note, cc_recipients=cc_recipients, bcc_recipients=bcc_recipients, user=get_mcp_user())
+    if include_attachments or attachment_indices or attachment_filenames:
+        _require("attachments", account_id)
+    return mailops.create_forward_draft(
+        message_id,
+        to_recipients,
+        note=note,
+        cc_recipients=cc_recipients,
+        bcc_recipients=bcc_recipients,
+        subject=subject,
+        attachment_indices=attachment_indices or [],
+        attachment_filenames=attachment_filenames or [],
+        include_attachments=include_attachments,
+        user=get_mcp_user(),
+    )
 
 
 @mcp.tool()
@@ -365,6 +382,52 @@ def list_drafts() -> list[dict[str, Any]]:
     _require("draft")
     audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_drafts", status="ok")
     return mailops.list_drafts(user=user)
+
+
+@mcp.tool()
+def get_draft(draft_id: int) -> dict[str, Any]:
+    """Read one draft including body and attachment metadata before approving, rejecting, deleting, or sending."""
+    user = get_mcp_user()
+    _require("draft")
+    draft = mailops.get_draft(draft_id, user=user)
+    audit(
+        actor_type="mcp_client",
+        actor_id=str(user["id"] if user else "codex"),
+        interface="mcp",
+        action="get_draft",
+        status="ok",
+        account_id=int(draft["account_id"]),
+        target_resource=str(draft_id),
+    )
+    return draft
+
+
+@mcp.tool()
+def approve_draft(draft_id: int, user_ok: bool = False, approved_by: str = "codex") -> dict[str, Any]:
+    """Approve a pending draft only after showing its full content to the user and receiving explicit OK."""
+    if not user_ok:
+        raise ValueError("user_ok=true is required after the draft content was shown to the user")
+    user = get_mcp_user()
+    _require("draft")
+    draft = mailops.get_draft(draft_id, user=user)
+    _require("send", int(draft["account_id"]))
+    return mailops.approve_draft(draft_id, approved_by=approved_by, user=user)
+
+
+@mcp.tool()
+def reject_draft(draft_id: int, rejected_by: str = "codex") -> dict[str, Any]:
+    """Reject a pending draft so it cannot be sent later."""
+    user = get_mcp_user()
+    _require("draft")
+    return mailops.reject_draft(draft_id, approved_by=rejected_by, user=user)
+
+
+@mcp.tool()
+def delete_draft(draft_id: int, deleted_by: str = "codex") -> dict[str, Any]:
+    """Delete an unsent draft and its stored attachments."""
+    user = get_mcp_user()
+    _require("draft")
+    return mailops.delete_draft(draft_id, deleted_by=deleted_by, user=user)
 
 
 @mcp.tool()

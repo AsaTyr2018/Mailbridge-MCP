@@ -929,6 +929,31 @@ def get_attachment(message_id: int, attachment_index: int = 0, filename: str = "
     }
 
 
+def _select_message_attachments(
+    message_id: int,
+    *,
+    attachment_indices: list[int] | None = None,
+    attachment_filenames: list[str] | None = None,
+    user: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    row = _message_row(message_id)
+    account = get_account(int(row["account_id"]), user=user)
+    if not account or not account["mcp_read_enabled"]:
+        raise ValueError("message read not allowed for account")
+    raw = _live_message_raw(account, row, user=user)
+    msg = BytesParser(policy=policy.default).parsebytes(raw)
+    attachments = _attachment_parts(msg)
+    wanted_indices = {int(index) for index in attachment_indices or []}
+    wanted_filenames = {str(name).strip().lower() for name in attachment_filenames or [] if str(name).strip()}
+    if not wanted_indices and not wanted_filenames:
+        return attachments
+    selected = []
+    for part in attachments:
+        if int(part["index"]) in wanted_indices or str(part["filename"]).lower() in wanted_filenames:
+            selected.append(part)
+    return selected
+
+
 def move_messages(
     account_id: int,
     message_ids: list[int],
@@ -1036,11 +1061,48 @@ def create_draft(account_id: int, to_recipients: str, subject: str, body_text: s
     return get_draft(draft_id, user=user)
 
 
-def create_forward_draft(message_id: int, to_recipients: str, note: str = "", cc_recipients: str = "", bcc_recipients: str = "", user: dict[str, Any] | None = None) -> dict[str, Any]:
+def _add_draft_attachments(draft_id: int, source_message_id: int, attachments: list[dict[str, Any]]) -> int:
+    if not attachments:
+        return 0
+    with db() as conn:
+        for part in attachments:
+            payload = part.get("_payload") or b""
+            conn.execute(
+                """
+                INSERT INTO draft_attachments (
+                    draft_id, source_message_id, source_attachment_index,
+                    filename, content_type, content, size_bytes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    draft_id,
+                    source_message_id,
+                    int(part["index"]),
+                    str(part["filename"]),
+                    str(part["content_type"] or "application/octet-stream"),
+                    payload,
+                    len(payload),
+                ),
+            )
+    return len(attachments)
+
+
+def create_forward_draft(
+    message_id: int,
+    to_recipients: str,
+    note: str = "",
+    cc_recipients: str = "",
+    bcc_recipients: str = "",
+    subject: str = "",
+    attachment_indices: list[int] | None = None,
+    attachment_filenames: list[str] | None = None,
+    include_attachments: bool = False,
+    user: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     original = get_message(message_id, user=user)
     account_id = int(original["account_id"])
-    subject = str(original.get("subject") or "")
-    forward_subject = subject if subject.lower().startswith("fwd:") else f"Fwd: {subject}"
+    original_subject = str(original.get("subject") or "")
+    forward_subject = subject.strip() if subject.strip() else (original_subject if original_subject.lower().startswith("fwd:") else f"Fwd: {original_subject}")
     body_parts = []
     if note.strip():
         body_parts.append(note.strip())
@@ -1066,8 +1128,41 @@ def create_forward_draft(message_id: int, to_recipients: str, note: str = "", cc
         in_reply_to_message_id=message_id,
         user=user,
     )
+    attached_count = 0
+    if include_attachments or attachment_indices or attachment_filenames:
+        selected = _select_message_attachments(
+            message_id,
+            attachment_indices=attachment_indices,
+            attachment_filenames=attachment_filenames,
+            user=user,
+        )
+        attached_count = _add_draft_attachments(int(draft["id"]), message_id, selected)
+        draft = get_draft(int(draft["id"]), user=user)
     audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="create_forward_draft", status="ok", account_id=account_id, target_resource=str(draft["id"]))
-    return draft
+    return draft | {"attached_count": attached_count}
+
+
+def _draft_attachment_summaries(draft_id: int) -> list[dict[str, Any]]:
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, source_message_id, source_attachment_index, filename, content_type, size_bytes, created_at
+            FROM draft_attachments
+            WHERE draft_id = ?
+            ORDER BY id
+            """,
+            (draft_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _draft_attachment_rows(draft_id: int) -> list[dict[str, Any]]:
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM draft_attachments WHERE draft_id = ? ORDER BY id",
+            (draft_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_draft(draft_id: int, user: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1081,7 +1176,10 @@ def get_draft(draft_id: int, user: dict[str, Any] | None = None) -> dict[str, An
             row = conn.execute("SELECT * FROM drafts WHERE id = ?", (draft_id,)).fetchone()
     if not row:
         raise ValueError("draft not found")
-    return dict(row)
+    result = dict(row)
+    result["attachments"] = _draft_attachment_summaries(draft_id)
+    result["attachment_count"] = len(result["attachments"])
+    return result
 
 
 def list_drafts(user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -1377,24 +1475,61 @@ def _dedupe_calendar_events(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
-def approve_draft(draft_id: int, approved_by: str = "admin", user: dict[str, Any] | None = None) -> None:
-    get_draft(draft_id, user=user)
+def approve_draft(draft_id: int, approved_by: str = "admin", user: dict[str, Any] | None = None) -> dict[str, Any]:
+    draft = get_draft(draft_id, user=user)
     with db() as conn:
         conn.execute(
             "UPDATE drafts SET status = 'approved', approved_at = CURRENT_TIMESTAMP, approved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (approved_by, draft_id),
         )
-    audit(actor_type="human", actor_id=approved_by, interface="http", action="draft_approve", status="ok", target_resource=str(draft_id))
+    audit(
+        actor_type="mcp_client" if user else "human",
+        actor_id=approved_by,
+        interface="mcp" if user else "http",
+        action="draft_approve",
+        status="ok",
+        account_id=int(draft["account_id"]),
+        target_resource=str(draft_id),
+    )
+    return get_draft(draft_id, user=user)
 
 
-def reject_draft(draft_id: int, approved_by: str = "admin", user: dict[str, Any] | None = None) -> None:
-    get_draft(draft_id, user=user)
+def reject_draft(draft_id: int, approved_by: str = "admin", user: dict[str, Any] | None = None) -> dict[str, Any]:
+    draft = get_draft(draft_id, user=user)
     with db() as conn:
         conn.execute(
             "UPDATE drafts SET status = 'rejected', approved_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (approved_by, draft_id),
         )
-    audit(actor_type="human", actor_id=approved_by, interface="http", action="draft_reject", status="ok", target_resource=str(draft_id))
+    audit(
+        actor_type="mcp_client" if user else "human",
+        actor_id=approved_by,
+        interface="mcp" if user else "http",
+        action="draft_reject",
+        status="ok",
+        account_id=int(draft["account_id"]),
+        target_resource=str(draft_id),
+    )
+    return get_draft(draft_id, user=user)
+
+
+def delete_draft(draft_id: int, deleted_by: str = "mcp", user: dict[str, Any] | None = None) -> dict[str, Any]:
+    draft = get_draft(draft_id, user=user)
+    if draft["status"] == "sent":
+        raise ValueError("sent drafts cannot be deleted")
+    with db() as conn:
+        conn.execute("DELETE FROM draft_attachments WHERE draft_id = ?", (draft_id,))
+        conn.execute("DELETE FROM drafts WHERE id = ?", (draft_id,))
+    audit(
+        actor_type="mcp_client" if user else "human",
+        actor_id=deleted_by,
+        interface="mcp" if user else "http",
+        action="draft_delete",
+        status="ok",
+        account_id=int(draft["account_id"]),
+        target_resource=str(draft_id),
+    )
+    return {"deleted": True, "draft_id": draft_id, "previous_status": draft["status"]}
 
 
 def _domain_allowed(account: dict[str, Any], recipients: list[str]) -> tuple[bool, str]:
@@ -1449,6 +1584,7 @@ def send_draft(draft_id: int, *, interactive_ok: bool = False, automation_consen
             "bcc": draft["bcc_recipients"],
             "subject": draft["subject"],
             "body_text": draft["body_text"],
+            "attachments": draft.get("attachments", []),
             "policy_decision": "interactive_ok_required",
             "instruction": "Show this payload to the user and call send_draft again with interactive_ok=true only after the user actively answers ok.",
         }
@@ -1464,6 +1600,16 @@ def send_draft(draft_id: int, *, interactive_ok: bool = False, automation_consen
         msg["Cc"] = draft["cc_recipients"]
     msg["Subject"] = draft["subject"]
     msg.set_content(draft["body_text"])
+    for attachment in _draft_attachment_rows(draft_id):
+        maintype, _, subtype = str(attachment["content_type"] or "application/octet-stream").partition("/")
+        if not subtype:
+            maintype, subtype = "application", "octet-stream"
+        msg.add_attachment(
+            bytes(attachment["content"]),
+            maintype=maintype,
+            subtype=subtype,
+            filename=str(attachment["filename"]),
+        )
 
     if account["smtp_tls_mode"] == "ssl":
         client = smtplib.SMTP_SSL(account["smtp_host"], int(account["smtp_port"]), timeout=30)
