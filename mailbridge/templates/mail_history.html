@@ -6,25 +6,24 @@
       <div class="panel-header">
         <div>
           <h2>Mail History</h2>
-          <div class="muted">Recent indexed mail metadata for your configured accounts.</div>
+          <div class="muted">Mail sent by MCP clients through your configured accounts.</div>
         </div>
       </div>
       <div class="table-shell">
         <table>
-          <thead><tr><th>Time</th><th>Account</th><th>Folder</th><th>From</th><th>To</th><th>Subject</th><th>Files</th></tr></thead>
+          <thead><tr><th>Sent</th><th>Account</th><th>To</th><th>CC</th><th>Subject</th><th>Approval</th></tr></thead>
           <tbody>
             {% for message in messages %}
               <tr>
-                <td>{{ message.sent_at or message.indexed_at }}</td>
+                <td>{{ message.sent_at or message.created_at }}</td>
                 <td><strong>{{ message.account_name }}</strong><br><span class="muted">{{ message.account_email }}</span></td>
-                <td>{{ message.folder }}</td>
-                <td>{{ message.sender }}</td>
-                <td>{{ message.recipients }}</td>
+                <td>{{ message.to_recipients }}</td>
+                <td>{% if message.cc_recipients %}{{ message.cc_recipients }}{% else %}<span class="muted">-</span>{% endif %}</td>
                 <td>{{ message.subject }}</td>
-                <td>{% if message.attachment_names %}<span class="badge">{{ message.attachment_names }}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td>{{ message.approved_by or message.created_by or "mcp" }}</td>
               </tr>
             {% else %}
-              <tr><td colspan="7">No indexed messages.</td></tr>
+              <tr><td colspan="6">No MCP-sent mail yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>

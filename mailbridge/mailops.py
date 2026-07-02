@@ -936,13 +936,15 @@ def list_mail_history(user: dict[str, Any] | None = None, *, limit: int = 100) -
         if user and not user.get("is_admin"):
             rows = conn.execute(
                 """
-                SELECT m.id, m.account_id, a.name AS account_name, a.email_address AS account_email,
-                       m.folder, m.subject, m.sender, m.recipients, m.sent_at,
-                       m.attachment_names, m.size_bytes, m.indexed_at
-                FROM messages m
-                JOIN accounts a ON a.id = m.account_id
+                SELECT d.id, d.account_id, a.name AS account_name, a.email_address AS account_email,
+                       d.to_recipients, d.cc_recipients, d.bcc_recipients,
+                       d.subject, d.body_text, d.sent_at, d.created_at, d.approved_by,
+                       d.revision, d.created_by
+                FROM drafts d
+                JOIN accounts a ON a.id = d.account_id
                 WHERE a.owner_user_id = ?
-                ORDER BY COALESCE(NULLIF(m.sent_at, ''), m.indexed_at) DESC, m.id DESC
+                  AND d.status = 'sent'
+                ORDER BY d.sent_at DESC, d.id DESC
                 LIMIT ?
                 """,
                 (user["id"], safe_limit),
@@ -950,12 +952,14 @@ def list_mail_history(user: dict[str, Any] | None = None, *, limit: int = 100) -
         else:
             rows = conn.execute(
                 """
-                SELECT m.id, m.account_id, a.name AS account_name, a.email_address AS account_email,
-                       m.folder, m.subject, m.sender, m.recipients, m.sent_at,
-                       m.attachment_names, m.size_bytes, m.indexed_at
-                FROM messages m
-                JOIN accounts a ON a.id = m.account_id
-                ORDER BY COALESCE(NULLIF(m.sent_at, ''), m.indexed_at) DESC, m.id DESC
+                SELECT d.id, d.account_id, a.name AS account_name, a.email_address AS account_email,
+                       d.to_recipients, d.cc_recipients, d.bcc_recipients,
+                       d.subject, d.body_text, d.sent_at, d.created_at, d.approved_by,
+                       d.revision, d.created_by
+                FROM drafts d
+                JOIN accounts a ON a.id = d.account_id
+                WHERE d.status = 'sent'
+                ORDER BY d.sent_at DESC, d.id DESC
                 LIMIT ?
                 """,
                 (safe_limit,),
