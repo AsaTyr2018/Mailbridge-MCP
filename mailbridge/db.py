@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 from .config import settings
+
+
+def generate_token_id() -> str:
+    return f"tkn_{secrets.token_hex(3).upper()}"
 
 
 def connect(path: Path | None = None) -> sqlite3.Connection:
@@ -164,6 +169,14 @@ def migrate() -> None:
                 action TEXT NOT NULL,
                 target_resource TEXT,
                 policy_decision TEXT NOT NULL DEFAULT '',
+                token_id TEXT NOT NULL DEFAULT '',
+                client_name TEXT NOT NULL DEFAULT '',
+                client_version TEXT NOT NULL DEFAULT '',
+                mcp_version TEXT NOT NULL DEFAULT '',
+                latency_ms INTEGER,
+                remote_addr TEXT NOT NULL DEFAULT '',
+                user_agent TEXT NOT NULL DEFAULT '',
+                intent TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL,
                 error_message TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -177,6 +190,7 @@ def migrate() -> None:
                 is_active INTEGER NOT NULL DEFAULT 1,
                 mcp_token_hash TEXT NOT NULL UNIQUE,
                 mcp_token_secret TEXT NOT NULL DEFAULT '',
+                mcp_token_id TEXT NOT NULL DEFAULT '',
                 mcp_token_preview TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -208,3 +222,21 @@ def migrate() -> None:
         user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
         if "mcp_token_secret" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN mcp_token_secret TEXT NOT NULL DEFAULT ''")
+        if "mcp_token_id" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN mcp_token_id TEXT NOT NULL DEFAULT ''")
+        for row in conn.execute("SELECT id FROM users WHERE mcp_token_id = '' OR mcp_token_id IS NULL").fetchall():
+            conn.execute("UPDATE users SET mcp_token_id = ? WHERE id = ?", (generate_token_id(), row["id"]))
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_mcp_token_id_idx ON users(mcp_token_id)")
+        audit_columns = {row["name"] for row in conn.execute("PRAGMA table_info(audit_log)").fetchall()}
+        for column_name, column_def in {
+            "token_id": "TEXT NOT NULL DEFAULT ''",
+            "client_name": "TEXT NOT NULL DEFAULT ''",
+            "client_version": "TEXT NOT NULL DEFAULT ''",
+            "mcp_version": "TEXT NOT NULL DEFAULT ''",
+            "latency_ms": "INTEGER",
+            "remote_addr": "TEXT NOT NULL DEFAULT ''",
+            "user_agent": "TEXT NOT NULL DEFAULT ''",
+            "intent": "TEXT NOT NULL DEFAULT ''",
+        }.items():
+            if column_name not in audit_columns:
+                conn.execute(f"ALTER TABLE audit_log ADD COLUMN {column_name} {column_def}")

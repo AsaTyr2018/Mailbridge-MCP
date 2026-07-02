@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from .config import ensure_secret_file, settings
-from .db import db
+from .db import db, generate_token_id
 from .security import secret_box
 
 
@@ -76,15 +76,16 @@ def create_user(username: str, password: str) -> tuple[dict[str, Any], str]:
         raise ValueError("password must be at least 8 characters")
     is_admin = user_count() == 0
     token = generate_token()
+    token_id = generate_token_id()
     with db() as conn:
         cur = conn.execute(
             """
             INSERT INTO users (
                 username, password_hash, is_admin, is_active,
-                mcp_token_hash, mcp_token_secret, mcp_token_preview
-            ) VALUES (?, ?, ?, 1, ?, ?, ?)
+                mcp_token_hash, mcp_token_secret, mcp_token_id, mcp_token_preview
+            ) VALUES (?, ?, ?, 1, ?, ?, ?, ?)
             """,
-            (username, hash_password(password), int(is_admin), _hash_secret(token), secret_box.encrypt(token), token_preview(token)),
+            (username, hash_password(password), int(is_admin), _hash_secret(token), secret_box.encrypt(token), token_id, token_preview(token)),
         )
         user_id = int(cur.lastrowid)
     return get_user(user_id), token
@@ -93,14 +94,12 @@ def create_user(username: str, password: str) -> tuple[dict[str, Any], str]:
 def get_user(user_id: int) -> dict[str, Any] | None:
     with db() as conn:
         row = conn.execute(
-            "SELECT id, username, is_admin, is_active, mcp_token_secret, mcp_token_preview, created_at, updated_at FROM users WHERE id = ?",
+            "SELECT id, username, is_admin, is_active, mcp_token_id, mcp_token_preview, created_at, updated_at FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
     if not row:
         return None
-    result = dict(row)
-    result["mcp_token"] = secret_box.decrypt(result.pop("mcp_token_secret"))
-    return result
+    return dict(row)
 
 
 def get_user_for_login(username: str) -> dict[str, Any] | None:
@@ -112,7 +111,7 @@ def get_user_for_login(username: str) -> dict[str, Any] | None:
 def list_users() -> list[dict[str, Any]]:
     with db() as conn:
         rows = conn.execute(
-            "SELECT id, username, is_admin, is_active, mcp_token_preview, created_at, updated_at FROM users ORDER BY id"
+            "SELECT id, username, is_admin, is_active, mcp_token_id, mcp_token_preview, created_at, updated_at FROM users ORDER BY id"
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -161,20 +160,24 @@ def find_user_by_mcp_token(token: str) -> dict[str, Any] | None:
     token_hash = _hash_secret(token)
     with db() as conn:
         row = conn.execute(
-            "SELECT id, username, is_admin, is_active, mcp_token_preview FROM users WHERE mcp_token_hash = ?",
+            "SELECT id, username, is_admin, is_active, mcp_token_id, mcp_token_preview FROM users WHERE mcp_token_hash = ?",
             (token_hash,),
         ).fetchone()
     if not row or not row["is_active"]:
         return None
-    return dict(row)
+    result = dict(row)
+    # MCP bearer tokens are personal account scopes. Admin rights apply to the web UI only.
+    result["is_admin"] = 0
+    return result
 
 
 def revoke_user_token(user_id: int) -> str:
     token = generate_token()
+    token_id = generate_token_id()
     with db() as conn:
         conn.execute(
-            "UPDATE users SET mcp_token_hash = ?, mcp_token_secret = ?, mcp_token_preview = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (_hash_secret(token), secret_box.encrypt(token), token_preview(token), user_id),
+            "UPDATE users SET mcp_token_hash = ?, mcp_token_secret = ?, mcp_token_id = ?, mcp_token_preview = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (_hash_secret(token), secret_box.encrypt(token), token_id, token_preview(token), user_id),
         )
     return token
 

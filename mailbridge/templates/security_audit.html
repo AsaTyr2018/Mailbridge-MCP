@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="shell">
+    {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+    <section>
+      <div class="panel-header">
+        <div>
+          <h2>Security Audit</h2>
+          <div class="muted">MCP bearer token usage by time, source IP, client and intent.</div>
+        </div>
+      </div>
+      <div class="table-shell">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>User / Token ID</th>
+              <th>Source</th>
+              <th>Client</th>
+              <th>Intent</th>
+              <th>Account</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in audit_rows %}
+              <tr>
+                <td>{{ row.created_at }}</td>
+                <td>
+                  <strong>{{ row.username or row.actor_id }}</strong><br>
+                  <code>{{ row.token_id or "unknown" }}</code>
+                </td>
+                <td>
+                  {{ row.remote_addr or "unknown" }}<br>
+                  <span class="muted">{{ row.user_agent or "unknown client" }}</span>
+                </td>
+                <td>
+                  {{ row.client_name or "unknown" }}<br>
+                  <span class="muted">{{ row.client_version or "unknown version" }}{% if row.mcp_version %} / MCP {{ row.mcp_version }}{% endif %}</span>
+                </td>
+                <td>
+                  <strong>{{ row.intent or row.action }}</strong><br>
+                  <span class="muted">{{ row.action }}{% if row.target_resource %} / {{ row.target_resource }}{% endif %}</span>
+                </td>
+                <td>{% if row.account_name %}<strong>{{ row.account_name }}</strong><br><span class="muted">{{ row.account_email }}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td><span class="badge {% if row.status == 'ok' %}ok{% elif row.status == 'error' %}danger{% endif %}">{{ row.status }}</span></td>
+                <td>{% if row.latency_ms is not none %}{{ row.latency_ms }} ms{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td>{{ row.error_message }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="9">No MCP token usage recorded.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+{% endblock %}

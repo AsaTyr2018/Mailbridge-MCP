@@ -6,6 +6,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.server import TransportSecuritySettings
 
 from . import mailops
+from .audit import audit
 from .auth_context import get_mcp_user
 from .config import settings
 
@@ -31,6 +32,7 @@ def list_accounts() -> list[dict[str, Any]]:
     """List configured accounts and their MCP permissions."""
     user = get_mcp_user()
     accounts = mailops.list_accounts(user=user)
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_accounts", status="ok")
     return [
         {
             "id": account["id"],
@@ -56,7 +58,9 @@ def get_account_status(account_id: int) -> dict[str, Any]:
     user = get_mcp_user()
     account = mailops.get_account(account_id, user=user)
     if not account:
+        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="get_account_status", status="error", account_id=account_id, error_message="account not found")
         raise ValueError("account not found")
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="get_account_status", status="ok", account_id=account_id)
     return {
         "id": account["id"],
         "name": account["name"],
@@ -114,11 +118,15 @@ def analyze_thread(thread_id: str, account_id: int) -> dict[str, Any]:
 @mcp.tool()
 def search_contacts(account_id: int, query: str, limit: int = 20) -> dict[str, Any]:
     """Search synced contacts. Backend placeholder until CardDAV/provider sync is configured."""
-    account = mailops.get_account(account_id, user=get_mcp_user())
+    user = get_mcp_user()
+    account = mailops.get_account(account_id, user=user)
     if not account:
+        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_contacts", status="error", account_id=account_id, error_message="account not found")
         raise ValueError("account not found")
     if not account["mcp_contacts_enabled"]:
+        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_contacts", status="error", account_id=account_id, error_message="contact lookup not allowed for account")
         raise ValueError("contact lookup not allowed for account")
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_contacts", status="ok", account_id=account_id)
     return {
         "account_id": account_id,
         "query": query,
@@ -132,11 +140,15 @@ def search_contacts(account_id: int, query: str, limit: int = 20) -> dict[str, A
 @mcp.tool()
 def list_calendar_events(account_id: int, start_at: str, end_at: str, limit: int = 50) -> dict[str, Any]:
     """List synced calendar events. Backend placeholder until CalDAV/provider sync is configured."""
-    account = mailops.get_account(account_id, user=get_mcp_user())
+    user = get_mcp_user()
+    account = mailops.get_account(account_id, user=user)
     if not account:
+        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_calendar_events", status="error", account_id=account_id, error_message="account not found")
         raise ValueError("account not found")
     if not account["mcp_calendar_enabled"]:
+        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_calendar_events", status="error", account_id=account_id, error_message="calendar lookup not allowed for account")
         raise ValueError("calendar lookup not allowed for account")
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_calendar_events", status="ok", account_id=account_id)
     return {
         "account_id": account_id,
         "start_at": start_at,
@@ -174,7 +186,9 @@ def create_draft(
 @mcp.tool()
 def list_drafts() -> list[dict[str, Any]]:
     """List recent drafts."""
-    return mailops.list_drafts(user=get_mcp_user())
+    user = get_mcp_user()
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_drafts", status="ok")
+    return mailops.list_drafts(user=user)
 
 
 @mcp.tool()

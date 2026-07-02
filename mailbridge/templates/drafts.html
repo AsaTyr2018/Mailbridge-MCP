@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="shell">
+    {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+    <section>
+      <div class="panel-header">
+        <div>
+          <h2>Draft Approval Queue</h2>
+          <div class="muted">Pending drafts created through MCP. Approval happens through Codex with explicit user confirmation.</div>
+        </div>
+      </div>
+      <div class="table-shell">
+        <table>
+          <thead><tr><th>ID</th><th>Account</th><th>Recipients</th><th>Subject</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody>
+            {% for draft in drafts %}
+              <tr>
+                <td>{{ draft.id }}</td>
+                <td><strong>{{ draft.account_name }}</strong><br><span class="muted">{{ draft.account_email }}</span></td>
+                <td>{{ draft.to_recipients }}</td>
+                <td>{{ draft.subject }}</td>
+                <td><span class="badge warn">{{ draft.status }}</span></td>
+                <td>{{ draft.created_at }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6">No pending drafts.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+{% endblock %}

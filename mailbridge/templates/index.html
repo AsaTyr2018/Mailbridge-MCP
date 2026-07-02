@@ -17,7 +17,32 @@
       </div>
       <div class="token-box">
         <strong>Your MCP bearer token</strong>
-        <code>{{ user.mcp_token }}</code>
+        <div class="token-actions">
+          <span class="token-preview">{{ user.mcp_token_id }}</span>
+          <form method="post" action="/mcp-token/renew" onsubmit="return confirm('Renew your MCP bearer token? The previous token stops working immediately and existing Codex sessions must be updated.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="danger">Renew</button>
+          </form>
+        </div>
+        <span class="muted">The full token is only shown once during registration or renewal.</span>
+      </div>
+      <div class="token-box">
+        <strong>Bearer Security</strong>
+        {% if bearer_security.latest %}
+          <div class="grid-3">
+            <div class="metric"><strong>Last Used</strong><span>{{ bearer_security.latest.created_at }}</span></div>
+            <div class="metric"><strong>Client</strong><span>{{ bearer_security.latest.client_name or bearer_security.latest.user_agent or "unknown" }}</span></div>
+            <div class="metric"><strong>Status</strong><span>{{ bearer_security.status }}</span></div>
+          </div>
+          <p class="muted">
+            IP: {{ bearer_security.latest.remote_addr or "unknown" }} /
+            Action: {{ bearer_security.latest.intent or bearer_security.latest.action }} /
+            Result: {{ bearer_security.latest.status }}
+          </p>
+          {% if bearer_security.warning %}<div class="notice">{{ bearer_security.warning }}</div>{% endif %}
+        {% else %}
+          <span class="muted">No MCP token usage recorded yet.</span>
+        {% endif %}
       </div>
       <p class="muted">This UI is not a mail client. Mail search, read, analysis, sync, and indexing are exposed to Codex through MCP.</p>
     </section>
@@ -73,7 +98,8 @@
       </div>
     </section>
 
-    <section class="panel">
+    <details class="panel add-account-panel">
+      <summary class="button">Add Account</summary>
       <div class="panel-header">
         <div>
           <h2>Add Account</h2>
@@ -81,65 +107,6 @@
         </div>
       </div>
       {% include "account_form.html" %}
-    </section>
-
-    <section>
-      <div class="panel-header">
-        <div>
-          <h2>Draft Approval Queue</h2>
-          <div class="muted">Interactive send approvals that still require an explicit user decision.</div>
-        </div>
-      </div>
-      <div class="table-shell">
-        <table>
-          <thead><tr><th>ID</th><th>Account</th><th>Recipients</th><th>Subject</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody>
-            {% for draft in drafts %}
-              <tr>
-                <td>{{ draft.id }}</td>
-                <td>{{ draft.account_id }}</td>
-                <td>{{ draft.to_recipients }}</td>
-                <td>{{ draft.subject }}</td>
-                <td><span class="badge warn">{{ draft.status }}</span></td>
-                <td class="actions">
-                  <form method="post" action="/drafts/{{ draft.id }}/approve"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Approve</button></form>
-                  <form method="post" action="/drafts/{{ draft.id }}/reject"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Reject</button></form>
-                </td>
-              </tr>
-            {% else %}
-              <tr><td colspan="6">No drafts.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section>
-      <div class="panel-header">
-        <div>
-          <h2>Recent Audit</h2>
-          <div class="muted">Latest web and MCP actions for traceability.</div>
-        </div>
-      </div>
-      <div class="table-shell">
-        <table>
-          <thead><tr><th>Time</th><th>Interface</th><th>Actor</th><th>Action</th><th>Status</th><th>Error</th></tr></thead>
-          <tbody>
-            {% for row in audit_rows %}
-              <tr>
-                <td>{{ row.created_at }}</td>
-                <td>{{ row.interface }}</td>
-                <td>{{ row.actor_type }}:{{ row.actor_id }}</td>
-                <td>{{ row.action }}</td>
-                <td><span class="badge {% if row.status == 'ok' %}ok{% elif row.status == 'error' %}danger{% endif %}">{{ row.status }}</span></td>
-                <td>{{ row.error_message }}</td>
-              </tr>
-            {% else %}
-              <tr><td colspan="6">No audit events.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </section>
+    </details>
   </div>
 {% endblock %}

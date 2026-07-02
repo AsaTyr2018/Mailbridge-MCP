@@ -33,14 +33,14 @@
                 <td><strong>{{ item.username }}</strong></td>
                 <td>{% if item.is_admin %}<span class="badge warn">Admin</span>{% else %}<span class="badge">User</span>{% endif %}</td>
                 <td>{% if item.is_active %}<span class="badge ok">Active</span>{% else %}<span class="badge danger">Locked</span>{% endif %}</td>
-                <td><code>{{ item.mcp_token_preview }}</code></td>
+                <td><code>{{ item.mcp_token_id }}</code></td>
                 <td class="actions">
                   {% if item.is_active %}
-                  <form method="post" action="/admin/users/{{ item.id }}/lock"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Lock</button></form>
-                {% else %}
-                  <form method="post" action="/admin/users/{{ item.id }}/unlock"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Unlock</button></form>
-                {% endif %}
-                  <form method="post" action="/admin/users/{{ item.id }}/revoke-token"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Revoke token</button></form>
+                    <form method="post" action="/admin/users/{{ item.id }}/lock"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Lock</button></form>
+                  {% else %}
+                    <form method="post" action="/admin/users/{{ item.id }}/unlock"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Unlock</button></form>
+                  {% endif %}
+                  <form method="post" action="/admin/users/{{ item.id }}/revoke-token" onsubmit="return confirm('Renew this user token? The previous token stops working immediately.');"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Renew token</button></form>
                   <form method="post" action="/admin/users/{{ item.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="danger">Delete</button></form>
                 </td>
               </tr>

@@ -169,6 +169,22 @@
         background: #0a0d13;
         border: 1px solid var(--line);
       }
+      details.add-account-panel > summary {
+        list-style: none;
+        width: max-content;
+      }
+      details.add-account-panel > summary::-webkit-details-marker { display: none; }
+      details.add-account-panel[open] > summary { margin-bottom: 16px; }
+      .token-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+      .token-preview {
+        color: var(--accent-strong);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
       .actions {
         display: flex;
         gap: 8px;
@@ -281,6 +297,10 @@
       {% if user %}
         <nav class="actions">
           <a class="button secondary" href="/">Accounts</a>
+          <a class="button secondary" href="/drafts">Queue</a>
+          <a class="button secondary" href="/mail-history">Mail History</a>
+          <a class="button secondary" href="/audit">Audit</a>
+          <a class="button secondary" href="/security-audit">Security Audit</a>
           {% if user.is_admin %}<a class="button secondary" href="/admin">Admin</a>{% endif %}
           <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="secondary">Logout {{ user.username }}</button></form>
         </nav>

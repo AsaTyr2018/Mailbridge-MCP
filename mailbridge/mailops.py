@@ -681,12 +681,179 @@ def list_drafts(user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     with db() as conn:
         if user and not user.get("is_admin"):
             rows = conn.execute(
-                "SELECT d.* FROM drafts d JOIN accounts a ON a.id = d.account_id WHERE a.owner_user_id = ? ORDER BY d.created_at DESC LIMIT 100",
+                """
+                SELECT d.*, a.name AS account_name, a.email_address AS account_email
+                FROM drafts d
+                JOIN accounts a ON a.id = d.account_id
+                WHERE a.owner_user_id = ?
+                ORDER BY d.created_at DESC
+                LIMIT 100
+                """,
                 (user["id"],),
             ).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM drafts ORDER BY created_at DESC LIMIT 100").fetchall()
+            rows = conn.execute(
+                """
+                SELECT d.*, a.name AS account_name, a.email_address AS account_email
+                FROM drafts d
+                JOIN accounts a ON a.id = d.account_id
+                ORDER BY d.created_at DESC
+                LIMIT 100
+                """
+            ).fetchall()
     return [dict(row) for row in rows]
+
+
+def list_pending_drafts(user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    with db() as conn:
+        if user and not user.get("is_admin"):
+            rows = conn.execute(
+                """
+                SELECT d.*, a.name AS account_name, a.email_address AS account_email
+                FROM drafts d
+                JOIN accounts a ON a.id = d.account_id
+                WHERE a.owner_user_id = ? AND d.status = 'pending_approval'
+                ORDER BY d.created_at DESC
+                LIMIT 100
+                """,
+                (user["id"],),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT d.*, a.name AS account_name, a.email_address AS account_email
+                FROM drafts d
+                JOIN accounts a ON a.id = d.account_id
+                WHERE d.status = 'pending_approval'
+                ORDER BY d.created_at DESC
+                LIMIT 100
+                """
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_mail_history(user: dict[str, Any] | None = None, *, limit: int = 100) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(limit, 200))
+    with db() as conn:
+        if user and not user.get("is_admin"):
+            rows = conn.execute(
+                """
+                SELECT m.id, m.account_id, a.name AS account_name, a.email_address AS account_email,
+                       m.folder, m.subject, m.sender, m.recipients, m.sent_at,
+                       m.attachment_names, m.size_bytes, m.indexed_at
+                FROM messages m
+                JOIN accounts a ON a.id = m.account_id
+                WHERE a.owner_user_id = ?
+                ORDER BY COALESCE(NULLIF(m.sent_at, ''), m.indexed_at) DESC, m.id DESC
+                LIMIT ?
+                """,
+                (user["id"], safe_limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT m.id, m.account_id, a.name AS account_name, a.email_address AS account_email,
+                       m.folder, m.subject, m.sender, m.recipients, m.sent_at,
+                       m.attachment_names, m.size_bytes, m.indexed_at
+                FROM messages m
+                JOIN accounts a ON a.id = m.account_id
+                ORDER BY COALESCE(NULLIF(m.sent_at, ''), m.indexed_at) DESC, m.id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_audit_events(user: dict[str, Any] | None = None, *, limit: int = 100) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(limit, 200))
+    with db() as conn:
+        if user and not user.get("is_admin"):
+            rows = conn.execute(
+                """
+                SELECT al.*, a.name AS account_name, a.email_address AS account_email
+                FROM audit_log al
+                LEFT JOIN accounts a ON a.id = al.account_id
+                WHERE a.owner_user_id = ?
+                   OR (al.account_id IS NULL AND al.actor_id = ?)
+                ORDER BY al.created_at DESC, al.id DESC
+                LIMIT ?
+                """,
+                (user["id"], str(user["id"]), safe_limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT al.*, a.name AS account_name, a.email_address AS account_email
+                FROM audit_log al
+                LEFT JOIN accounts a ON a.id = al.account_id
+                ORDER BY al.created_at DESC, al.id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_security_audit_events(user: dict[str, Any] | None = None, *, limit: int = 100) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(limit, 200))
+    with db() as conn:
+        if user and not user.get("is_admin"):
+            rows = conn.execute(
+                """
+                SELECT al.*, a.name AS account_name, a.email_address AS account_email, u.username
+                FROM audit_log al
+                LEFT JOIN accounts a ON a.id = al.account_id
+                LEFT JOIN users u ON CAST(u.id AS TEXT) = al.actor_id
+                WHERE al.interface = 'mcp'
+                  AND (
+                    a.owner_user_id = ?
+                    OR al.actor_id = ?
+                  )
+                ORDER BY al.created_at DESC, al.id DESC
+                LIMIT ?
+                """,
+                (user["id"], str(user["id"]), safe_limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT al.*, a.name AS account_name, a.email_address AS account_email, u.username
+                FROM audit_log al
+                LEFT JOIN accounts a ON a.id = al.account_id
+                LEFT JOIN users u ON CAST(u.id AS TEXT) = al.actor_id
+                WHERE al.interface = 'mcp'
+                ORDER BY al.created_at DESC, al.id DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def bearer_security_summary(user: dict[str, Any] | None = None) -> dict[str, Any]:
+    if not user:
+        return {}
+    rows = list_security_audit_events(user=user, limit=20)
+    latest = rows[0] if rows else None
+    warning = ""
+    status = "Normal"
+    if latest:
+        latest_ip = latest.get("remote_addr") or ""
+        latest_client = latest.get("client_name") or latest.get("user_agent") or ""
+        previous_ips = {row.get("remote_addr") for row in rows[1:] if row.get("remote_addr")}
+        previous_clients = {(row.get("client_name") or row.get("user_agent")) for row in rows[1:] if row.get("client_name") or row.get("user_agent")}
+        if latest_ip and previous_ips and latest_ip not in previous_ips:
+            warning = "Token was used from a new IP address."
+            status = "Review"
+        elif latest_client and previous_clients and latest_client not in previous_clients:
+            warning = "Token was used by a new client."
+            status = "Review"
+    return {
+        "latest": latest,
+        "status": status,
+        "warning": warning,
+    }
 
 
 def approve_draft(draft_id: int, approved_by: str = "admin", user: dict[str, Any] | None = None) -> None:

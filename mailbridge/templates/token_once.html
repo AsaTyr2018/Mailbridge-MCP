@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="auth-shell">
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>{{ title }}</h2>
+          <div class="muted">{{ message }}</div>
+        </div>
+      </div>
+      <div class="token-box">
+        <strong>Token ID</strong>
+        <code>{{ user.mcp_token_id }}</code>
+      </div>
+      <div class="token-box">
+        <strong>MCP bearer token</strong>
+        <code>{{ token }}</code>
+      </div>
+      <p class="muted">After leaving this page, only the token preview is shown. Renewing the token invalidates all clients using the previous token.</p>
+      <div class="actions">
+        <a class="button" href="{{ return_url }}">Continue</a>
+      </div>
+    </section>
+  </div>
+{% endblock %}

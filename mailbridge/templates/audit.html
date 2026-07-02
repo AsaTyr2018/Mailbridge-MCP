@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="shell">
+    {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+    <section>
+      <div class="panel-header">
+        <div>
+          <h2>Audit</h2>
+          <div class="muted">User-scoped web and MCP activity.</div>
+        </div>
+      </div>
+      <div class="table-shell">
+        <table>
+          <thead><tr><th>Time</th><th>Account</th><th>Interface</th><th>Actor</th><th>Action</th><th>Status</th><th>Error</th></tr></thead>
+          <tbody>
+            {% for row in audit_rows %}
+              <tr>
+                <td>{{ row.created_at }}</td>
+                <td>{% if row.account_name %}<strong>{{ row.account_name }}</strong><br><span class="muted">{{ row.account_email }}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
+                <td>{{ row.interface }}</td>
+                <td>{{ row.actor_type }}:{{ row.actor_id }}</td>
+                <td>{{ row.action }}</td>
+                <td><span class="badge {% if row.status == 'ok' %}ok{% elif row.status == 'error' %}danger{% endif %}">{{ row.status }}</span></td>
+                <td>{{ row.error_message }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7">No audit events.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+{% endblock %}
