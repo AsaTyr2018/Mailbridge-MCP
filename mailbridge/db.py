@@ -301,6 +301,15 @@ def migrate() -> None:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS magic_login_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                expires_at INTEGER NOT NULL,
+                used_at INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             INSERT OR IGNORE INTO app_settings (key, value)
             VALUES ('registration_enabled', 'true');
 
@@ -349,3 +358,5 @@ def migrate() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS automation_token_accounts_account_idx ON automation_token_accounts(account_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS sync_jobs_account_status_idx ON sync_jobs(account_id, status, created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS sync_jobs_owner_idx ON sync_jobs(owner_user_id, created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS magic_login_tokens_hash_idx ON magic_login_tokens(token_hash, used_at, expires_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS magic_login_tokens_user_idx ON magic_login_tokens(user_id, created_at)")

@@ -145,6 +145,11 @@ def user_id_from_session(value: str | None) -> int | None:
     if not hmac.compare_digest(expected, signature):
         return None
     try:
+        if int(time.time()) - int(issued_at) > settings.session_ttl_seconds:
+            return None
+    except ValueError:
+        return None
+    try:
         return int(user_id)
     except ValueError:
         return None
@@ -169,6 +174,42 @@ def find_user_by_mcp_token(token: str) -> dict[str, Any] | None:
     # MCP bearer tokens are personal account scopes. Admin rights apply to the web UI only.
     result["is_admin"] = 0
     return result
+
+
+def create_magic_login_token(user_id: int, ttl_seconds: int) -> tuple[str, int]:
+    user = get_user(user_id)
+    if not user or not user["is_active"]:
+        raise ValueError("user not found or inactive")
+    token = secrets.token_urlsafe(40)
+    expires_at = int(time.time()) + max(60, int(ttl_seconds))
+    with db() as conn:
+        conn.execute(
+            """
+            INSERT INTO magic_login_tokens (user_id, token_hash, expires_at)
+            VALUES (?, ?, ?)
+            """,
+            (int(user_id), _hash_secret(token), expires_at),
+        )
+    return token, expires_at
+
+
+def consume_magic_login_token(token: str) -> dict[str, Any] | None:
+    if not token:
+        return None
+    token_hash = _hash_secret(token)
+    now = int(time.time())
+    with db() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM magic_login_tokens
+            WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?
+            """,
+            (token_hash, now),
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE magic_login_tokens SET used_at = ? WHERE id = ?", (now, int(row["id"])))
+    return get_user(int(row["user_id"]))
 
 
 def revoke_user_token(user_id: int) -> str:

@@ -18,6 +18,8 @@ class Settings:
     secure_cookies: bool
     auto_sync_interval_seconds: int
     auto_sync_limit: int
+    magic_link_ttl_seconds: int
+    session_ttl_seconds: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -44,6 +46,8 @@ class Settings:
             secure_cookies=os.getenv("MAILBRIDGE_SECURE_COOKIES", "false").lower() in {"1", "true", "yes", "on"},
             auto_sync_interval_seconds=max(30, int(os.getenv("MAILBRIDGE_AUTO_SYNC_INTERVAL_SECONDS", "300"))),
             auto_sync_limit=max(1, int(os.getenv("MAILBRIDGE_AUTO_SYNC_LIMIT", "50"))),
+            magic_link_ttl_seconds=max(60, int(os.getenv("MAILBRIDGE_MAGIC_LINK_TTL_SECONDS", "600"))),
+            session_ttl_seconds=max(300, int(os.getenv("MAILBRIDGE_SESSION_TTL_SECONDS", "3600"))),
         )
 
 

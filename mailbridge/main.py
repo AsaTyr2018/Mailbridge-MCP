@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from .audit import audit
 from .config import settings
 from .db import db, migrate
 from . import mailops
@@ -140,7 +141,7 @@ async def auth_middleware(request: Request, call_next):
             submitted = str(form.get("csrf_token", ""))
         if not submitted or not expected or not hmac_compare(submitted, expected):
             return JSONResponse({"detail": "invalid CSRF token"}, status_code=403)
-    public_paths = {"/healthz", "/login", "/register"}
+    public_paths = {"/healthz", "/login", "/register", "/sso/mcp"}
     if not is_mcp_path and path not in public_paths and not path.startswith("/static"):
         user = current_user(request)
         if not user:
@@ -216,6 +217,17 @@ async def login(request: Request):
 def logout():
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(users.SESSION_COOKIE)
+    return response
+
+
+@app.get("/sso/mcp")
+def mcp_magic_login(request: Request, token: str = ""):
+    user = users.consume_magic_login_token(token)
+    if not user:
+        return RedirectResponse("/login?notice=Magic%20link%20expired%20or%20already%20used", status_code=303)
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(users.SESSION_COOKIE, users.make_session_token(int(user["id"])), httponly=True, samesite="lax", secure=settings.secure_cookies)
+    audit(actor_type="human", actor_id=str(user["id"]), interface="http", action="web_sso_login", status="ok", remote_addr=request_remote_addr(request), user_agent=request.headers.get("user-agent", ""))
     return response
 
 
