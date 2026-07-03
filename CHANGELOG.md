@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3
+
+- Return Magic Login links by default from `get_web_ui_link` for personal user tokens.
+- Keep automation-token calls non-failing by returning normal Web UI links without login links.
+
 ## 0.4.2
 
 - Add optional single-use Magic Link generation to `get_web_ui_link`.

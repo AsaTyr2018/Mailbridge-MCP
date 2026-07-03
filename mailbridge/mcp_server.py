@@ -45,7 +45,7 @@ def _message_account_id(message_id: int) -> int:
 
 
 @mcp.tool()
-def get_web_ui_link(include_login_link: bool = False) -> dict[str, Any]:
+def get_web_ui_link(include_login_link: bool = True) -> dict[str, Any]:
     """Return the configured Mailbridge web UI link so the MCP client can show it to the user on request."""
     user = get_mcp_user()
     automation_token = get_automation_token()
@@ -59,13 +59,16 @@ def get_web_ui_link(include_login_link: bool = False) -> dict[str, Any]:
     }
     if include_login_link:
         if automation_token:
-            raise PermissionError("automation tokens cannot create web login links")
-        token, expires_at = users.create_magic_login_token(int(user["id"]), settings.magic_link_ttl_seconds)
-        result["login_url"] = f"{base_url}/sso/mcp?token={token}"
-        result["login_expires_at"] = expires_at
-        result["login_expires_in_seconds"] = settings.magic_link_ttl_seconds
-        result["session_ttl_seconds"] = settings.session_ttl_seconds
-        audit(actor_type="mcp_client", actor_id=str(user["id"]), interface="mcp", action="web_sso_link_created", status="ok")
+            result["login_link_available"] = False
+            result["login_link_reason"] = "automation tokens cannot create web login links"
+        else:
+            token, expires_at = users.create_magic_login_token(int(user["id"]), settings.magic_link_ttl_seconds)
+            result["login_url"] = f"{base_url}/sso/mcp?token={token}"
+            result["login_expires_at"] = expires_at
+            result["login_expires_in_seconds"] = settings.magic_link_ttl_seconds
+            result["session_ttl_seconds"] = settings.session_ttl_seconds
+            result["login_link_available"] = True
+            audit(actor_type="mcp_client", actor_id=str(user["id"]), interface="mcp", action="web_sso_link_created", status="ok")
     return result
 
 
