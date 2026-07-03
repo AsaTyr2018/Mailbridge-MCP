@@ -20,6 +20,10 @@ class Settings:
     auto_sync_limit: int
     magic_link_ttl_seconds: int
     session_ttl_seconds: int
+    git_commit: str
+    update_check_repo: str
+    update_check_branch: str
+    github_api_url: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -48,6 +52,10 @@ class Settings:
             auto_sync_limit=max(1, int(os.getenv("MAILBRIDGE_AUTO_SYNC_LIMIT", "50"))),
             magic_link_ttl_seconds=max(60, int(os.getenv("MAILBRIDGE_MAGIC_LINK_TTL_SECONDS", "600"))),
             session_ttl_seconds=max(300, int(os.getenv("MAILBRIDGE_SESSION_TTL_SECONDS", "3600"))),
+            git_commit=os.getenv("MAILBRIDGE_GIT_COMMIT", "").strip(),
+            update_check_repo=os.getenv("MAILBRIDGE_UPDATE_CHECK_REPO", "AsaTyr2018/Mailbridge-MCP").strip(),
+            update_check_branch=os.getenv("MAILBRIDGE_UPDATE_CHECK_BRANCH", "main").strip(),
+            github_api_url=os.getenv("MAILBRIDGE_GITHUB_API_URL", "https://api.github.com").rstrip("/"),
         )
 
 

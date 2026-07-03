@@ -16,6 +16,25 @@
         <div class="metric"><strong>Configured accounts</strong><span>{{ accounts|length }}</span></div>
       </div>
       <div class="token-box">
+        <div class="panel-header compact">
+          <div>
+            <strong>Update Check</strong>
+            <div class="muted">{{ update_status.message }}</div>
+          </div>
+          <a class="button secondary" href="/?refresh_update=true">Check</a>
+        </div>
+        <div class="grid-3">
+          <div class="metric"><strong>Current</strong><span>{{ update_status.current_commit_short }}</span></div>
+          <div class="metric"><strong>GitHub</strong><span>{{ update_status.latest_commit_short or "unknown" }}</span></div>
+          <div class="metric"><strong>Status</strong><span>{{ update_status.status }}</span></div>
+        </div>
+        {% if update_status.update_available %}
+          <p class="muted">Latest: <a href="{{ update_status.latest_url }}">{{ update_status.latest_message or update_status.latest_commit_short }}</a></p>
+        {% elif update_status.error %}
+          <p class="muted">{{ update_status.error }}</p>
+        {% endif %}
+      </div>
+      <div class="token-box">
         <strong>Your MCP bearer token</strong>
         <div class="token-actions">
           <span class="token-preview">{{ user.mcp_token_id }}</span>

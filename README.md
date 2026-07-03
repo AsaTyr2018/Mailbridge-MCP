@@ -45,6 +45,7 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Dashboard Bearer Security summary with last use, client, IP, action, and status.
 - Security Audit for MCP token usage.
 - Single-use Magic Link generation from `get_web_ui_link` for personal user tokens.
+- Web UI and MCP update checks against the configured GitHub branch.
 - User-scoped audit views; admins can inspect global usage.
 - Admin menu for registration on/off and user lock/delete/token renew.
 - Automation-scoped mail actions for move, mark read/unread, trash, and folder-backed labels.
@@ -125,6 +126,7 @@ enabled = true
 
 - `list_accounts`
 - `get_web_ui_link`
+- `check_for_updates`
 - `get_account_status`
 - `sync_account`
 - `start_sync_account`
@@ -170,6 +172,8 @@ enabled = true
 `sync_account` now queues a background sync job instead of blocking the MCP request. Use `get_sync_job` or `list_sync_jobs` to inspect progress.
 
 `get_web_ui_link` returns the configured Web UI URL and, for personal user tokens, a single-use Magic Link for browser login by default. Automation tokens receive the normal Web UI links without a login link. The Magic Link TTL defaults to 600 seconds and the resulting Web session TTL defaults to 3600 seconds. Set `include_login_link=false` to return only plain links.
+
+`check_for_updates` compares the running Mailbridge commit with the configured GitHub branch and reports when a newer commit is available. Docker deployments should set `MAILBRIDGE_GIT_COMMIT` during deployment for exact comparisons. Without it, Mailbridge can only detect the current commit when it runs directly from a Git checkout.
 
 Calendar/contact tools read normalized local data from configured sync profiles. CardDAV and CalDAV profiles perform direct DAV item sync. ActiveSync profiles perform the ActiveSync handshake and folder discovery first; for Mailcow/SOGo-style servers, discovered `vcard` and `vevent` collections are mapped to the matching DAV collections and imported into the same local indexes.
 

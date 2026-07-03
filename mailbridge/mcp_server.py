@@ -10,6 +10,7 @@ from . import syncops
 from . import automation
 from . import syncjobs
 from . import users
+from . import updatecheck
 from .audit import audit
 from .auth_context import get_automation_token, get_mcp_user
 from .config import settings
@@ -69,6 +70,15 @@ def get_web_ui_link(include_login_link: bool = True) -> dict[str, Any]:
             result["session_ttl_seconds"] = settings.session_ttl_seconds
             result["login_link_available"] = True
             audit(actor_type="mcp_client", actor_id=str(user["id"]), interface="mcp", action="web_sso_link_created", status="ok")
+    return result
+
+
+@mcp.tool()
+def check_for_updates(force_refresh: bool = False) -> dict[str, Any]:
+    """Check the running Mailbridge commit against the configured GitHub branch."""
+    user = get_mcp_user()
+    result = updatecheck.check_for_updates(force=force_refresh)
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="check_for_updates", status="ok")
     return result
 
 

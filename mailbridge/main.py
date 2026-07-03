@@ -21,6 +21,7 @@ from . import auth_context
 from . import syncops
 from . import automation
 from . import syncjobs
+from . import updatecheck
 
 
 mcp_app = mcp.streamable_http_app()
@@ -263,7 +264,7 @@ async def register(request: Request):
 
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request, notice: str | None = None):
+def index(request: Request, notice: str | None = None, refresh_update: bool = False):
     user = getattr(request.state, "user", None) or current_user(request)
     accounts = mailops.list_accounts(user=user)
     with db() as conn:
@@ -287,6 +288,7 @@ def index(request: Request, notice: str | None = None):
             "message_count": message_count,
             "mcp_url": f"{settings.public_url.rstrip('/')}/mcp/",
             "bearer_security": mailops.bearer_security_summary(user=user),
+            "update_status": updatecheck.check_for_updates(force=refresh_update),
             "notice": notice,
             "user": user,
         },

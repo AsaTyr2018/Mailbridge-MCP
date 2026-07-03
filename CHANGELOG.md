@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.4
+
+- Add update checks against the configured GitHub branch in the Web UI and MCP.
+- Add `check_for_updates` MCP tool.
+- Add runtime update-check configuration for Docker deployments.
+
 ## 0.4.3
 
 - Return Magic Login links by default from `get_web_ui_link` for personal user tokens.
