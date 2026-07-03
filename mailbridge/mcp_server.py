@@ -136,17 +136,23 @@ def get_account_status(account_id: int) -> dict[str, Any]:
 @mcp.tool()
 def sync_account(account_id: int, limit: int = 100) -> dict[str, Any]:
     """Queue IMAP sync and local indexing for an account. Use get_sync_job to poll progress."""
+    user = get_mcp_user()
     _require("sync", account_id)
     safe_limit = max(1, min(limit, 100000))
-    return syncjobs.enqueue_sync_job(account_id, limit=safe_limit, mode="manual_mcp", user=get_mcp_user(), requested_by="mcp")
+    job = syncjobs.enqueue_sync_job(account_id, limit=safe_limit, mode="manual_mcp", user=user, requested_by="mcp")
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="sync_job_enqueue", status="ok", account_id=account_id, target_resource=f"sync_job:{job['id']}")
+    return job
 
 
 @mcp.tool()
 def start_sync_account(account_id: int, limit: int = 1000, mode: str = "manual_mcp") -> dict[str, Any]:
     """Start a background sync job for an account and return the job record."""
+    user = get_mcp_user()
     _require("sync", account_id)
     safe_limit = max(1, min(limit, 100000))
-    return syncjobs.enqueue_sync_job(account_id, limit=safe_limit, mode=mode, user=get_mcp_user(), requested_by="mcp")
+    job = syncjobs.enqueue_sync_job(account_id, limit=safe_limit, mode=mode, user=user, requested_by="mcp")
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="sync_job_enqueue", status="ok", account_id=account_id, target_resource=f"sync_job:{job['id']}")
+    return job
 
 
 @mcp.tool()

@@ -538,6 +538,16 @@ def sync_account(
     progress: ProgressCallback | None = None,
     reconcile_flags: bool = True,
     flag_reconcile_limit: int | None = None,
+    audit_actor_type: str = "mcp_client",
+    audit_actor_id: str | None = None,
+    audit_interface: str = "mcp",
+    audit_token_id: str = "",
+    audit_client_name: str = "",
+    audit_client_version: str = "",
+    audit_remote_addr: str = "",
+    audit_user_agent: str = "",
+    audit_intent: str = "",
+    audit_target_resource: str | None = None,
 ) -> dict[str, Any]:
     account = get_account(account_id, include_secret=True, user=user)
     if not account:
@@ -627,7 +637,21 @@ def sync_account(
                 "UPDATE accounts SET last_sync_at = CURRENT_TIMESTAMP, last_sync_error = NULL WHERE id = ?",
                 (account_id,),
             )
-        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="sync_account", status="ok", account_id=account_id)
+        audit(
+            actor_type=audit_actor_type,
+            actor_id=audit_actor_id or str(user["id"] if user else "codex"),
+            interface=audit_interface,
+            action="sync_account",
+            status="ok",
+            account_id=account_id,
+            target_resource=audit_target_resource,
+            token_id=audit_token_id,
+            client_name=audit_client_name,
+            client_version=audit_client_version,
+            remote_addr=audit_remote_addr,
+            user_agent=audit_user_agent,
+            intent=audit_intent or "sync_account",
+        )
         return {"ok": True, "indexed": indexed, "updated_flags": int(flag_result["updated_flags"]), "checked_flags": int(flag_result["checked"])}
     except Exception as exc:
         with db() as conn:
@@ -635,7 +659,22 @@ def sync_account(
                 "UPDATE accounts SET last_sync_error = ? WHERE id = ?",
                 (str(exc), account_id),
             )
-        audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="sync_account", status="error", account_id=account_id, error_message=str(exc))
+        audit(
+            actor_type=audit_actor_type,
+            actor_id=audit_actor_id or str(user["id"] if user else "codex"),
+            interface=audit_interface,
+            action="sync_account",
+            status="error",
+            account_id=account_id,
+            target_resource=audit_target_resource,
+            token_id=audit_token_id,
+            client_name=audit_client_name,
+            client_version=audit_client_version,
+            remote_addr=audit_remote_addr,
+            user_agent=audit_user_agent,
+            intent=audit_intent or "sync_account",
+            error_message=str(exc),
+        )
         raise
     finally:
         try:
@@ -1755,7 +1794,7 @@ def list_security_audit_events(user: dict[str, Any] | None = None, *, limit: int
                 FROM audit_log al
                 LEFT JOIN accounts a ON a.id = al.account_id
                 LEFT JOIN users u ON CAST(u.id AS TEXT) = al.actor_id
-                WHERE al.interface = 'mcp'
+                WHERE al.interface IN ('mcp', 'system')
                   AND (
                     a.owner_user_id = ?
                     OR al.actor_id = ?
@@ -1772,7 +1811,7 @@ def list_security_audit_events(user: dict[str, Any] | None = None, *, limit: int
                 FROM audit_log al
                 LEFT JOIN accounts a ON a.id = al.account_id
                 LEFT JOIN users u ON CAST(u.id AS TEXT) = al.actor_id
-                WHERE al.interface = 'mcp'
+                WHERE al.interface IN ('mcp', 'system')
                 ORDER BY al.created_at DESC, al.id DESC
                 LIMIT ?
                 """,
@@ -1784,7 +1823,7 @@ def list_security_audit_events(user: dict[str, Any] | None = None, *, limit: int
 def bearer_security_summary(user: dict[str, Any] | None = None) -> dict[str, Any]:
     if not user:
         return {}
-    rows = list_security_audit_events(user=user, limit=20)
+    rows = [row for row in list_security_audit_events(user=user, limit=100) if row.get("interface") == "mcp"][:20]
     latest = rows[0] if rows else None
     warning = ""
     status = "Normal"

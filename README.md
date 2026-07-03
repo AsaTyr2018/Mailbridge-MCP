@@ -18,6 +18,7 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Full bearer tokens are shown only once during registration or renewal.
 - Renewing a token invalidates the previous token immediately.
 - MCP usage is audited with timestamp, user, Token ID, client, MCP version, IP, user-agent, action, result, and latency.
+- Background services such as automatic sync are audited as explicit `system` activity instead of anonymous MCP clients.
 
 ## Features
 
@@ -44,6 +45,7 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Interactive sends require displaying final content and active user `ok`.
 - Dashboard Bearer Security summary with last use, client, IP, action, and status.
 - Security Audit for MCP token usage.
+- Security Audit also shows Mailbridge system-service actions such as automatic sync execution.
 - Single-use Magic Link generation from `get_web_ui_link` for personal user tokens.
 - Web UI and MCP update checks against the configured GitHub branch.
 - User-scoped audit views; admins can inspect global usage.

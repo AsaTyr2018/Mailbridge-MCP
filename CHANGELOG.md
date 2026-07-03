@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5
+
+- Record background sync execution as explicit `system` audit events.
+- Keep MCP sync-job enqueue events tied to the calling bearer token.
+- Include system service activity in Security Audit without polluting the Bearer Security dashboard summary.
+
 ## 0.4.4
 
 - Add update checks against the configured GitHub branch in the Web UI and MCP.

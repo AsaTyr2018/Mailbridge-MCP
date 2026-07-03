@@ -6,6 +6,7 @@ from typing import Any
 
 from .config import settings
 from .db import db
+from . import __version__
 from . import mailops
 from . import users
 
@@ -185,6 +186,16 @@ def _run_job(job: dict[str, Any]) -> None:
             progress=progress,
             reconcile_flags=True,
             flag_reconcile_limit=None,
+            audit_actor_type="system",
+            audit_actor_id="mailbridge-sync-worker",
+            audit_interface="system",
+            audit_token_id=f"system:{job['requested_by'] or 'worker'}",
+            audit_client_name="mailbridge-sync-worker",
+            audit_client_version=__version__,
+            audit_remote_addr="local",
+            audit_user_agent=f"Mailbridge/{__version__} background-sync",
+            audit_intent=str(job["mode"] or "sync_account"),
+            audit_target_resource=f"sync_job:{job_id}",
         )
         with db() as conn:
             conn.execute(
