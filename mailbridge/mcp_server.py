@@ -113,6 +113,55 @@ def list_accounts() -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+def list_archive_profiles(account_id: int | None = None) -> list[dict[str, Any]]:
+    """List read-only IMAP archive profiles linked to visible mail accounts."""
+    user = get_mcp_user()
+    automation_token = get_automation_token()
+    _require("list_accounts")
+    if account_id is not None:
+        _require("search", account_id)
+        profiles = mailops.list_archive_profiles(account_id, user=user)
+    else:
+        profiles = mailops.list_all_archive_profiles(user=user)
+    if automation_token:
+        allowed_ids = set(automation_token.get("allowed_account_ids") or [])
+        profiles = [profile for profile in profiles if int(profile["account_id"]) in allowed_ids]
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="list_archive_profiles", status="ok")
+    return [
+        {
+            "id": profile["id"],
+            "account_id": profile["account_id"],
+            "account_name": profile.get("account_name", ""),
+            "account_email": profile.get("account_email", ""),
+            "name": profile["name"],
+            "provider": profile["provider"],
+            "enabled": profile["enabled"],
+            "imap_host": profile["imap_host"],
+            "imap_port": profile["imap_port"],
+            "imap_tls_mode": profile["imap_tls_mode"],
+            "imap_username": profile["imap_username"],
+            "folder_mode": profile.get("folder_mode", "selected"),
+            "sync_folders": profile["sync_folders"],
+            "mail_index_mode": profile["mail_index_mode"],
+            "last_sync_at": profile["last_sync_at"],
+            "last_sync_error": profile["last_sync_error"],
+        }
+        for profile in profiles
+    ]
+
+
+@mcp.tool()
+def sync_archive_profile(profile_id: int, limit: int = 100) -> dict[str, Any]:
+    """Synchronize one linked read-only IMAP archive profile into the local archive index."""
+    user = get_mcp_user()
+    profile = mailops._archive_profile_row(profile_id, user=user)
+    _require("sync", int(profile["account_id"]))
+    result = mailops.sync_archive_profile(profile_id, limit=max(1, min(int(limit), 100000)), user=user)
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="sync_archive_profile", status="ok", account_id=int(profile["account_id"]), target_resource=str(profile_id))
+    return result
+
+
+@mcp.tool()
 def get_account_status(account_id: int) -> dict[str, Any]:
     """Return sync and health status for one account."""
     user = get_mcp_user()
@@ -183,10 +232,46 @@ def search_mail(account_id: int, query: str, limit: int = 20) -> list[dict[str, 
 
 
 @mcp.tool()
+def search_archive_mail(query: str, limit: int = 20, account_id: int | None = None) -> list[dict[str, Any]]:
+    """Search indexed read-only IMAP archive profiles linked to visible mail accounts."""
+    user = get_mcp_user()
+    automation_token = get_automation_token()
+    allowed_ids = set(automation_token.get("allowed_account_ids") or []) if automation_token else None
+    if account_id is not None:
+        _require("search", account_id)
+    else:
+        for profile in mailops.list_all_archive_profiles(user=user):
+            profile_account_id = int(profile["account_id"])
+            if allowed_ids is not None and profile_account_id not in allowed_ids:
+                continue
+            _require("search", profile_account_id)
+    return mailops.search_archive_mail(query, limit=limit, user=user, allowed_account_ids=allowed_ids, account_id=account_id)
+
+
+@mcp.tool()
 def get_message(message_id: int) -> dict[str, Any]:
     """Read one indexed message by exact id."""
     _require("read", _message_account_id(message_id))
     return mailops.get_message(message_id, user=get_mcp_user())
+
+
+@mcp.tool()
+def export_archived_message(message_id: int, max_bytes: int = 10000000) -> dict[str, Any]:
+    """Export one archived message as base64 EML for manual restore or external import."""
+    account_id = _message_account_id(message_id)
+    _require("read", account_id)
+    return mailops.export_archived_message(message_id, max_bytes=max_bytes, user=get_mcp_user())
+
+
+@mcp.tool()
+def restore_archived_message(message_id: int, target_folder: str = "INBOX", user_ok: bool = False) -> dict[str, Any]:
+    """Restore one archived message to a live mailbox folder by IMAP APPEND. Requires explicit user_ok."""
+    account_id = _message_account_id(message_id)
+    _require("read", account_id)
+    _require("move", account_id)
+    if not user_ok:
+        raise PermissionError("show the archived message and target folder to the user, then call with user_ok=true")
+    return mailops.restore_archived_message(message_id, target_folder=target_folder, user=get_mcp_user())
 
 
 @mcp.tool()

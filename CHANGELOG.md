@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.6
+
+- Add account-linked read-only IMAP mail archive profiles for Mailpiler-style archives.
+- Add archive folder modes, including global `all` folder discovery through IMAP `LIST`.
+- Add archive search, EML export, and explicit-OK IMAP restore tools.
+- Add Web UI controls for adding, testing, syncing, and deleting linked mail archives.
+
 ## 0.4.5
 
 - Record background sync execution as explicit `system` audit events.

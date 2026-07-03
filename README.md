@@ -33,6 +33,9 @@ Mailbridge is designed so mail credentials stay inside Mailbridge.
 - Cached IMAP flag reconcile so read/unread state stays fresh without downloading message bodies.
 - User and admin mail-index cache flush controls.
 - Privacy-aware mail index modes: `metadata_only`, `headers`, and `full_text`.
+- Account-linked read-only IMAP mail archives for Mailpiler-style domain archives.
+- Archive folder modes: selected folders or global IMAP `LIST` discovery.
+- Archive search, EML export, and explicit-OK restore into the live mailbox.
 - User-owned Contact/Calendar sync profiles.
 - CardDAV contact sync into a local searchable contact index.
 - CalDAV calendar sync into a local event index.
@@ -68,6 +71,7 @@ The web UI provides these operational pages:
 
 - `Dashboard`: runtime status, MCP URL, token renewal, Bearer Security summary.
 - `Accounts`: account list and account actions.
+- `Mail Archives`: read-only IMAP archive links on each account, with test/sync/delete controls.
 - `Sync Jobs`: recent background sync status, progress, and cancellation.
 - `Add Account`: guided account creation with email/password autodiscovery and collapsed advanced IMAP/SMTP settings.
 - `Queue`: pending MCP-created drafts. No approve/reject buttons are shown here.
@@ -136,6 +140,11 @@ enabled = true
 - `list_sync_jobs`
 - `cancel_sync_job`
 - `search_mail`
+- `list_archive_profiles`
+- `sync_archive_profile`
+- `search_archive_mail`
+- `export_archived_message`
+- `restore_archived_message`
 - `get_message`
 - `get_thread`
 - `analyze_thread`
@@ -176,6 +185,10 @@ enabled = true
 `get_web_ui_link` returns the configured Web UI URL and, for personal user tokens, a single-use Magic Link for browser login by default. Automation tokens receive the normal Web UI links without a login link. The Magic Link TTL defaults to 600 seconds and the resulting Web session TTL defaults to 3600 seconds. Set `include_login_link=false` to return only plain links.
 
 `check_for_updates` compares the running Mailbridge commit with the configured GitHub branch and reports when a newer commit is available. Docker deployments should set `MAILBRIDGE_GIT_COMMIT` during deployment for exact comparisons. Without it, Mailbridge can only detect the current commit when it runs directly from a Git checkout.
+
+Mail archive profiles are linked to a normal Mailbridge account. They are read-only IMAP sources for Mailpiler-style archive mailboxes and can reuse the account IMAP credentials or store separate archive credentials. `folder_mode=all` discovers all selectable folders through IMAP `LIST`; `folder_mode=selected` uses the configured comma-separated folder list. Archive search results are marked with `source=archive`.
+
+`restore_archived_message` restores an archived EML into a live mailbox folder through IMAP `APPEND` and requires `user_ok=true` after the client has shown the archived message and target folder to the user. `export_archived_message` returns a base64 EML for manual restore or external import.
 
 Calendar/contact tools read normalized local data from configured sync profiles. CardDAV and CalDAV profiles perform direct DAV item sync. ActiveSync profiles perform the ActiveSync handshake and folder discovery first; for Mailcow/SOGo-style servers, discovered `vcard` and `vevent` collections are mapped to the matching DAV collections and imported into the same local indexes.
 

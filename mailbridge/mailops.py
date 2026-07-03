@@ -360,6 +360,150 @@ def test_smtp(account_id: int, user: dict[str, Any] | None = None) -> dict[str, 
             pass
 
 
+def _archive_profile_row(profile_id: int, user: dict[str, Any] | None = None, *, include_secret: bool = False) -> dict[str, Any]:
+    with db() as conn:
+        if user and not user.get("is_admin"):
+            row = conn.execute(
+                """
+                SELECT ap.*
+                FROM archive_profiles ap
+                JOIN accounts a ON a.id = ap.account_id
+                WHERE ap.id = ? AND a.owner_user_id = ?
+                """,
+                (profile_id, user["id"]),
+            ).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM archive_profiles WHERE id = ?", (profile_id,)).fetchone()
+    if not row:
+        raise ValueError("archive profile not found")
+    result = dict(row)
+    result["enabled"] = bool(result["enabled"])
+    result["folder_mode"] = result.get("folder_mode") or "selected"
+    if include_secret:
+        result["imap_password"] = secret_box.decrypt(result.pop("imap_secret"))
+    else:
+        result.pop("imap_secret", None)
+    return result
+
+
+def list_archive_profiles(account_id: int, user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    account = get_account(account_id, user=user)
+    if not account:
+        raise ValueError("account not found")
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM archive_profiles WHERE account_id = ? ORDER BY name, id", (account_id,)).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item.pop("imap_secret", None)
+        item["enabled"] = bool(item["enabled"])
+        result.append(item)
+    return result
+
+
+def list_all_archive_profiles(user: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    with db() as conn:
+        if user and not user.get("is_admin"):
+            rows = conn.execute(
+                """
+                SELECT ap.*, a.name AS account_name, a.email_address AS account_email
+                FROM archive_profiles ap
+                JOIN accounts a ON a.id = ap.account_id
+                WHERE a.owner_user_id = ?
+                ORDER BY a.name, ap.name
+                """,
+                (user["id"],),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT ap.*, a.name AS account_name, a.email_address AS account_email
+                FROM archive_profiles ap
+                JOIN accounts a ON a.id = ap.account_id
+                ORDER BY a.name, ap.name
+                """
+            ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item.pop("imap_secret", None)
+        item["enabled"] = bool(item["enabled"])
+        result.append(item)
+    return result
+
+
+def create_archive_profile(account_id: int, data: dict[str, Any], user: dict[str, Any] | None = None) -> int:
+    account = get_account(account_id, include_secret=True, user=user)
+    if not account:
+        raise ValueError("account not found")
+    username = data.get("imap_username", "").strip() or account["imap_username"]
+    password = data.get("imap_password", "") or account["imap_password"]
+    with db() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO archive_profiles (
+                account_id, name, provider, imap_host, imap_port, imap_tls_mode,
+                imap_username, imap_secret, folder_mode, sync_folders, mail_index_mode, enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                account_id,
+                data.get("name", "").strip() or "Archive",
+                data.get("provider", "imap").strip() or "imap",
+                data["imap_host"].strip(),
+                int(data.get("imap_port") or 993),
+                data.get("imap_tls_mode", "ssl"),
+                username,
+                secret_box.encrypt(password),
+                data.get("folder_mode", "selected") if data.get("folder_mode") in {"selected", "all"} else "selected",
+                data.get("sync_folders", "Archive").strip() or "Archive",
+                data.get("mail_index_mode", "metadata_only"),
+                int(data.get("enabled", True)),
+            ),
+        )
+        profile_id = int(cur.lastrowid)
+    audit(actor_type="human", actor_id=str(user["id"] if user else "admin"), interface="http", action="archive_profile_create", status="ok", account_id=account_id, target_resource=str(profile_id))
+    return profile_id
+
+
+def delete_archive_profile(profile_id: int, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    profile = _archive_profile_row(profile_id, user=user)
+    with db() as conn:
+        conn.execute("DELETE FROM messages WHERE archive_profile_id = ?", (profile_id,))
+        conn.execute("DELETE FROM archive_profiles WHERE id = ?", (profile_id,))
+    audit(actor_type="human", actor_id=str(user["id"] if user else "admin"), interface="http", action="archive_profile_delete", status="ok", account_id=int(profile["account_id"]), target_resource=str(profile_id))
+    return profile
+
+
+def test_archive_profile(profile_id: int, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    profile = _archive_profile_row(profile_id, user=user, include_secret=True)
+    client = _imap_connect(profile)
+    try:
+        status, boxes = client.list()
+        return {"ok": status == "OK", "mailboxes": len(boxes or [])}
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
+def _imap_list_folders(client: imaplib.IMAP4) -> list[str]:
+    status, boxes = client.list()
+    if status != "OK":
+        return []
+    folders: list[str] = []
+    for item in boxes or []:
+        line = item.decode("utf-8", errors="replace") if isinstance(item, bytes) else str(item)
+        match = re.search(r'"[^"]*"\s+(.+)$', line)
+        folder = match.group(1).strip() if match else line.rsplit(" ", 1)[-1].strip()
+        if folder.startswith('"') and folder.endswith('"'):
+            folder = folder[1:-1]
+        if folder and folder not in folders:
+            folders.append(folder)
+    return folders
+
+
 def _message_text(msg: EmailMessage) -> str:
     if msg.is_multipart():
         parts = []
@@ -439,8 +583,9 @@ def _upsert_message_rows(rows: list[tuple[Any, ...]]) -> None:
             INSERT INTO messages (
                 account_id, folder, imap_uid, rfc822_message_id, thread_id,
                 subject, sender, recipients, cc, bcc, delivered_to, sent_at,
-                snippet, text_body, attachment_names, size_bytes, headers_json, flags
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                snippet, text_body, attachment_names, size_bytes, headers_json, flags,
+                source, archive_profile_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id, folder, imap_uid) DO UPDATE SET
                 subject = excluded.subject,
                 sender = excluded.sender,
@@ -455,6 +600,8 @@ def _upsert_message_rows(rows: list[tuple[Any, ...]]) -> None:
                 size_bytes = excluded.size_bytes,
                 headers_json = excluded.headers_json,
                 flags = excluded.flags,
+                source = excluded.source,
+                archive_profile_id = excluded.archive_profile_id,
                 indexed_at = CURRENT_TIMESTAMP
             """,
             rows,
@@ -484,7 +631,7 @@ def refresh_cached_flags(
             f"""
             SELECT id, folder, imap_uid, flags
             FROM messages
-            WHERE account_id = ?
+            WHERE account_id = ? AND source = 'live'
             ORDER BY indexed_at DESC, id DESC
             {limit_sql}
             """,
@@ -618,6 +765,8 @@ def sync_account(
                         size_bytes or len(raw),
                         json.dumps(headers),
                         flags_text,
+                        "live",
+                        None,
                     )
                 )
                 indexed += 1
@@ -675,6 +824,95 @@ def sync_account(
             intent=audit_intent or "sync_account",
             error_message=str(exc),
         )
+        raise
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
+def sync_archive_profile(profile_id: int, *, limit: int = 100, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    profile = _archive_profile_row(profile_id, user=user, include_secret=True)
+    if not profile["enabled"]:
+        raise ValueError("archive profile disabled")
+    if not get_account(int(profile["account_id"]), user=user):
+        raise ValueError("account not found")
+    indexed = 0
+    total_estimate = 0
+    client = _imap_connect(profile)
+    try:
+        if profile.get("folder_mode") == "all":
+            folders = _imap_list_folders(client)
+        else:
+            folders = [folder.strip() for folder in profile["sync_folders"].split(",") if folder.strip()]
+        index_mode = profile.get("mail_index_mode") or "metadata_only"
+        fetch_spec = _sync_fetch_spec(index_mode)
+        for folder in folders:
+            status, _ = client.select(folder, readonly=True)
+            if status != "OK":
+                continue
+            status, data = client.uid("search", None, "ALL")
+            if status != "OK" or not data or not data[0]:
+                continue
+            uids = data[0].split()[-max(1, int(limit)) :]
+            total_estimate += len(uids)
+            batch_rows: list[tuple[Any, ...]] = []
+            for uid in uids:
+                status, msg_data = client.uid("fetch", uid, fetch_spec)
+                if status != "OK" or not msg_data:
+                    continue
+                fetch_meta, raw = _extract_fetch_payload(msg_data)
+                if not raw:
+                    continue
+                msg = BytesParser(policy=policy.default).parsebytes(raw)
+                text_body = _message_text(msg) if index_mode == "full_text" else ""
+                sent_at = ""
+                if msg.get("date"):
+                    try:
+                        sent_at = parsedate_to_datetime(str(msg.get("date"))).isoformat()
+                    except Exception:
+                        sent_at = str(msg.get("date"))
+                size_bytes, flags_text = _parse_fetch_size_flags(fetch_meta)
+                headers = {k: str(v) for k, v in msg.items()} if index_mode in {"headers", "full_text"} else {}
+                uid_text = uid.decode("ascii")
+                batch_rows.append(
+                    (
+                        int(profile["account_id"]),
+                        folder,
+                        f"archive:{profile_id}:{uid_text}",
+                        str(msg.get("message-id", "")),
+                        str(msg.get("references", msg.get("in-reply-to", msg.get("message-id", "")))),
+                        str(msg.get("subject", "")),
+                        str(msg.get("from", "")),
+                        _address_header(msg, "to"),
+                        _address_header(msg, "cc"),
+                        _address_header(msg, "bcc"),
+                        _address_header(msg, "delivered-to"),
+                        sent_at,
+                        " ".join(text_body.split())[:500] if index_mode == "full_text" else "",
+                        text_body,
+                        _attachment_names(msg) if index_mode == "full_text" else "",
+                        size_bytes or len(raw),
+                        json.dumps(headers),
+                        flags_text,
+                        "archive",
+                        profile_id,
+                    )
+                )
+                indexed += 1
+                if len(batch_rows) >= 50:
+                    _upsert_message_rows(batch_rows)
+                    batch_rows = []
+            _upsert_message_rows(batch_rows)
+        with db() as conn:
+            conn.execute("UPDATE archive_profiles SET last_sync_at = CURRENT_TIMESTAMP, last_sync_error = NULL WHERE id = ?", (profile_id,))
+        audit(actor_type="human", actor_id=str(user["id"] if user else "admin"), interface="http", action="archive_profile_sync", status="ok", account_id=int(profile["account_id"]), target_resource=str(profile_id))
+        return {"ok": True, "indexed": indexed, "total_estimate": total_estimate}
+    except Exception as exc:
+        with db() as conn:
+            conn.execute("UPDATE archive_profiles SET last_sync_error = ? WHERE id = ?", (str(exc), profile_id))
+        audit(actor_type="human", actor_id=str(user["id"] if user else "admin"), interface="http", action="archive_profile_sync", status="error", account_id=int(profile["account_id"]), target_resource=str(profile_id), error_message=str(exc))
         raise
     finally:
         try:
@@ -907,7 +1145,7 @@ def search_mail(account_id: int, query: str, limit: int | None = None, user: dic
         raise ValueError("mail search not allowed for account")
     effective_limit = min(limit or account["max_search_results"], account["max_search_results"])
     fts_query, extra_where, extra_params = _parse_search_query(query)
-    where_parts = ["m.account_id = ?", *extra_where]
+    where_parts = ["m.account_id = ?", "m.source = 'live'", *extra_where]
     params: list[Any] = [account_id, *extra_params]
     if fts_query:
         where_parts.insert(0, "messages_fts MATCH ?")
@@ -921,7 +1159,7 @@ def search_mail(account_id: int, query: str, limit: int | None = None, user: dic
     with db() as conn:
         rows = conn.execute(
             f"""
-            SELECT m.id, m.account_id, m.folder, m.subject, m.sender, m.recipients,
+            SELECT m.id, m.account_id, m.source, m.archive_profile_id, m.folder, m.subject, m.sender, m.recipients,
                    m.cc, m.bcc, m.delivered_to, m.sent_at, m.snippet,
                    m.attachment_names, m.size_bytes, m.indexed_at
             {from_clause}
@@ -932,6 +1170,58 @@ def search_mail(account_id: int, query: str, limit: int | None = None, user: dic
             params,
         ).fetchall()
     audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_mail", status="ok", account_id=account_id)
+    return [dict(row) for row in rows]
+
+
+def search_archive_mail(
+    query: str,
+    limit: int = 20,
+    user: dict[str, Any] | None = None,
+    allowed_account_ids: set[int] | None = None,
+    account_id: int | None = None,
+) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 100))
+    if account_id is not None and not get_account(account_id, user=user):
+        raise ValueError("account not found")
+    fts_query, extra_where, extra_params = _parse_search_query(query)
+    where_parts = ["m.source = 'archive'", *extra_where]
+    params: list[Any] = [*extra_params]
+    if account_id is not None:
+        where_parts.append("m.account_id = ?")
+        params.append(account_id)
+    if allowed_account_ids is not None:
+        if not allowed_account_ids:
+            return []
+        where_parts.append(f"m.account_id IN ({','.join('?' for _ in allowed_account_ids)})")
+        params.extend(sorted(allowed_account_ids))
+    if user and not user.get("is_admin"):
+        where_parts.append("a.owner_user_id = ?")
+        params.append(int(user["id"]))
+    if fts_query:
+        where_parts.insert(0, "messages_fts MATCH ?")
+        params.insert(0, fts_query)
+        from_clause = "FROM messages_fts f JOIN messages m ON m.id = f.rowid JOIN accounts a ON a.id = m.account_id LEFT JOIN archive_profiles ap ON ap.id = m.archive_profile_id"
+        order_clause = "ORDER BY bm25(messages_fts)"
+    else:
+        from_clause = "FROM messages m JOIN accounts a ON a.id = m.account_id LEFT JOIN archive_profiles ap ON ap.id = m.archive_profile_id"
+        order_clause = "ORDER BY m.sent_at DESC, m.id DESC"
+    params.append(safe_limit)
+    with db() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT m.id, m.account_id, m.source, m.archive_profile_id, ap.name AS archive_name,
+                   a.name AS account_name, a.email_address AS account_email,
+                   m.folder, m.subject, m.sender, m.recipients, m.cc, m.bcc,
+                   m.delivered_to, m.sent_at, m.snippet, m.attachment_names,
+                   m.size_bytes, m.indexed_at
+            {from_clause}
+            WHERE {" AND ".join(where_parts)}
+            {order_clause}
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="search_archive_mail", status="ok")
     return [dict(row) for row in rows]
 
 
@@ -995,6 +1285,42 @@ def _live_message_body(account: dict[str, Any], row: dict[str, Any], max_bytes: 
     return body, False, attachment_names, "live_imap"
 
 
+def _archive_message_body(row: dict[str, Any], max_bytes: int, user: dict[str, Any] | None = None) -> tuple[str, bool, str, str]:
+    raw = _archive_message_raw(row, user=user)
+    msg = BytesParser(policy=policy.default).parsebytes(raw)
+    body = _message_text(msg)
+    attachment_names = _attachment_names(msg)
+    encoded = body.encode("utf-8")
+    if len(encoded) > max_bytes:
+        return encoded[:max_bytes].decode("utf-8", errors="ignore"), True, attachment_names, "archive_imap_truncated"
+    return body, False, attachment_names, "archive_imap"
+
+
+def _archive_message_raw(row: dict[str, Any], user: dict[str, Any] | None = None) -> bytes:
+    profile_id = int(row.get("archive_profile_id") or 0)
+    if not profile_id:
+        raise ValueError("archive profile missing")
+    profile = _archive_profile_row(profile_id, user=user, include_secret=True)
+    client = _imap_connect(profile)
+    try:
+        status, _ = client.select(row["folder"], readonly=True)
+        if status != "OK":
+            raise ValueError("archive folder not selectable")
+        uid = str(row["imap_uid"]).split(":")[-1]
+        status, msg_data = client.uid("fetch", uid.encode("ascii"), "(RFC822)")
+        if status != "OK" or not msg_data:
+            raise ValueError("archive message fetch failed")
+        _, raw = _extract_fetch_payload(msg_data)
+        if not raw:
+            raise ValueError("archive message unavailable")
+        return raw
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+
 def _live_message_raw(account: dict[str, Any], row: dict[str, Any], user: dict[str, Any] | None = None) -> bytes:
     full_account = get_account(int(account["id"]), include_secret=True, user=user)
     if not full_account:
@@ -1030,7 +1356,10 @@ def get_message(message_id: int, user: dict[str, Any] | None = None) -> dict[str
     max_bytes = int(account["max_message_bytes"])
     body = result["text_body"]
     if not body:
-        live_body, truncated, attachment_names, source = _live_message_body(account, result, max_bytes, user=user)
+        if result.get("source") == "archive":
+            live_body, truncated, attachment_names, source = _archive_message_body(result, max_bytes, user=user)
+        else:
+            live_body, truncated, attachment_names, source = _live_message_body(account, result, max_bytes, user=user)
         result["text_body"] = live_body
         result["truncated"] = truncated
         result["body_source"] = source
@@ -1046,6 +1375,68 @@ def get_message(message_id: int, user: dict[str, Any] | None = None) -> dict[str
         result["body_source"] = "local_index"
     audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="get_message", status="ok", account_id=int(row["account_id"]), target_resource=str(message_id))
     return result
+
+
+def export_archived_message(message_id: int, max_bytes: int = 10_000_000, user: dict[str, Any] | None = None) -> dict[str, Any]:
+    row = _message_row(message_id)
+    if row.get("source") != "archive":
+        raise ValueError("message is not an archive message")
+    account = get_account(int(row["account_id"]), user=user)
+    if not account or not account["mcp_read_enabled"]:
+        raise ValueError("archive export not allowed for account")
+    raw = _archive_message_raw(row, user=user)
+    safe_max = max(1, min(int(max_bytes), 25_000_000))
+    truncated = len(raw) > safe_max
+    payload = raw[:safe_max]
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="export_archived_message", status="ok", account_id=int(row["account_id"]), target_resource=str(message_id))
+    return {
+        "message_id": message_id,
+        "account_id": int(row["account_id"]),
+        "archive_profile_id": int(row["archive_profile_id"]),
+        "filename": f"archived-message-{message_id}.eml",
+        "content_type": "message/rfc822",
+        "encoding": "base64",
+        "content_base64": base64.b64encode(payload).decode("ascii"),
+        "size_bytes": len(raw),
+        "returned_bytes": len(payload),
+        "truncated": truncated,
+    }
+
+
+def restore_archived_message(
+    message_id: int,
+    *,
+    target_folder: str = "INBOX",
+    user: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    row = _message_row(message_id)
+    if row.get("source") != "archive":
+        raise ValueError("message is not an archive message")
+    account = get_account(int(row["account_id"]), include_secret=True, user=user)
+    if not account or not account["mcp_read_enabled"]:
+        raise ValueError("archive restore not allowed for account")
+    raw = _archive_message_raw(row, user=user)
+    folder = target_folder.strip() or "INBOX"
+    client = _imap_connect(account)
+    try:
+        status, _ = client.append(folder, None, None, raw)
+        if status != "OK":
+            raise ValueError("IMAP append restore failed")
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="restore_archived_message", status="ok", account_id=int(row["account_id"]), target_resource=str(message_id), policy_decision=f"target_folder:{folder}")
+    return {
+        "ok": True,
+        "message_id": message_id,
+        "account_id": int(row["account_id"]),
+        "archive_profile_id": int(row["archive_profile_id"]),
+        "target_folder": folder,
+        "restored_bytes": len(raw),
+        "subject": row.get("subject", ""),
+    }
 
 
 def _message_row(message_id: int) -> dict[str, Any]:

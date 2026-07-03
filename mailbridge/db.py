@@ -98,6 +98,8 @@ def migrate() -> None:
                 size_bytes INTEGER NOT NULL DEFAULT 0,
                 headers_json TEXT NOT NULL DEFAULT '{}',
                 flags TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'live',
+                archive_profile_id INTEGER,
                 indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(account_id, folder, imap_uid)
             );
@@ -182,6 +184,26 @@ def migrate() -> None:
                 base_url TEXT NOT NULL DEFAULT '',
                 username TEXT NOT NULL DEFAULT '',
                 secret TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_sync_at TEXT,
+                last_sync_error TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS archive_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                name TEXT NOT NULL DEFAULT '',
+                provider TEXT NOT NULL DEFAULT 'imap',
+                imap_host TEXT NOT NULL,
+                imap_port INTEGER NOT NULL DEFAULT 993,
+                imap_tls_mode TEXT NOT NULL DEFAULT 'ssl',
+                imap_username TEXT NOT NULL,
+                imap_secret TEXT NOT NULL,
+                folder_mode TEXT NOT NULL DEFAULT 'selected',
+                sync_folders TEXT NOT NULL DEFAULT 'Archive',
+                mail_index_mode TEXT NOT NULL DEFAULT 'metadata_only',
                 enabled INTEGER NOT NULL DEFAULT 1,
                 last_sync_at TEXT,
                 last_sync_error TEXT,
@@ -327,9 +349,15 @@ def migrate() -> None:
             "delivered_to": "TEXT NOT NULL DEFAULT ''",
             "attachment_names": "TEXT NOT NULL DEFAULT ''",
             "size_bytes": "INTEGER NOT NULL DEFAULT 0",
+            "source": "TEXT NOT NULL DEFAULT 'live'",
+            "archive_profile_id": "INTEGER",
         }.items():
             if column_name not in existing_columns:
                 conn.execute(f"ALTER TABLE messages ADD COLUMN {column_name} {column_def}")
+        conn.execute("CREATE INDEX IF NOT EXISTS messages_source_idx ON messages(account_id, source, archive_profile_id)")
+        archive_columns = {row["name"] for row in conn.execute("PRAGMA table_info(archive_profiles)").fetchall()}
+        if "folder_mode" not in archive_columns:
+            conn.execute("ALTER TABLE archive_profiles ADD COLUMN folder_mode TEXT NOT NULL DEFAULT 'selected'")
         user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
         if "mcp_token_secret" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN mcp_token_secret TEXT NOT NULL DEFAULT ''")
@@ -352,6 +380,7 @@ def migrate() -> None:
             if column_name not in audit_columns:
                 conn.execute(f"ALTER TABLE audit_log ADD COLUMN {column_name} {column_def}")
         conn.execute("CREATE INDEX IF NOT EXISTS sync_profiles_account_idx ON sync_profiles(account_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS archive_profiles_account_idx ON archive_profiles(account_id, enabled)")
         conn.execute("CREATE INDEX IF NOT EXISTS contacts_account_name_idx ON contacts(account_id, display_name)")
         conn.execute("CREATE INDEX IF NOT EXISTS calendar_events_account_time_idx ON calendar_events(account_id, starts_at, ends_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS automation_tokens_owner_idx ON automation_tokens(owner_user_id, enabled)")

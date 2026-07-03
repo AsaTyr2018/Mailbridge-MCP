@@ -502,6 +502,7 @@ def edit_account(request: Request, account_id: int, notice: str | None = None):
             "user": user,
             "notice": notice,
             "sync_profiles": syncops.list_sync_profiles(account_id, user=user),
+            "archive_profiles": mailops.list_archive_profiles(account_id, user=user),
         },
     )
 
@@ -650,6 +651,80 @@ def delete_sync_profile(request: Request, profile_id: int):
         return RedirectResponse(f"/accounts/{profile['account_id']}?notice=Sync%20profile%20deleted", status_code=303)
     except Exception as exc:
         return RedirectResponse(f"/?notice=Delete%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/accounts/{account_id}/archive-profiles")
+async def create_archive_profile(request: Request, account_id: int):
+    form = await request.form()
+    user = getattr(request.state, "user", None)
+    try:
+        mailops.create_archive_profile(
+            account_id,
+            {
+                "name": str(form.get("name", "")),
+                "provider": str(form.get("provider", "imap")),
+                "imap_host": str(form.get("imap_host", "")),
+                "imap_port": int(form.get("imap_port") or 993),
+                "imap_tls_mode": str(form.get("imap_tls_mode", "ssl")),
+                "imap_username": str(form.get("imap_username", "")),
+                "imap_password": str(form.get("imap_password", "")),
+                "folder_mode": str(form.get("folder_mode", "selected")),
+                "sync_folders": str(form.get("sync_folders", "Archive")),
+                "mail_index_mode": str(form.get("mail_index_mode", "metadata_only")),
+                "enabled": _bool_form(form.get("enabled")),
+            },
+            user=user,
+        )
+        return RedirectResponse(f"/accounts/{account_id}?notice=Archive%20profile%20created", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/accounts/{account_id}?notice=Archive%20profile%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/archive-profiles/{profile_id}/test")
+def test_archive_profile(request: Request, profile_id: int):
+    user = getattr(request.state, "user", None)
+    try:
+        profile = mailops._archive_profile_row(profile_id, user=user)
+        result = mailops.test_archive_profile(profile_id, user=user)
+        return RedirectResponse(f"/accounts/{profile['account_id']}?notice=Archive%20test:%20{quote(str(result)[:240])}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/?notice=Archive%20test%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/archive-profiles/{profile_id}/sync")
+def sync_archive_profile(request: Request, profile_id: int):
+    user = getattr(request.state, "user", None)
+    try:
+        profile = mailops._archive_profile_row(profile_id, user=user)
+        result = mailops.sync_archive_profile(profile_id, limit=1000, user=user)
+        return RedirectResponse(f"/accounts/{profile['account_id']}?notice=Archive%20sync:%20{quote(str(result)[:240])}", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/?notice=Archive%20sync%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/archive-profiles/{profile_id}/delete")
+def delete_archive_profile(request: Request, profile_id: int):
+    user = getattr(request.state, "user", None)
+    try:
+        profile = mailops.delete_archive_profile(profile_id, user=user)
+        return RedirectResponse(f"/accounts/{profile['account_id']}?notice=Archive%20profile%20deleted", status_code=303)
+    except Exception as exc:
+        return RedirectResponse(f"/?notice=Archive%20delete%20failed:%20{quote(str(exc))}", status_code=303)
+
+
+@app.post("/archive-messages/{message_id}/restore")
+async def restore_archive_message_http(request: Request, message_id: int):
+    form = await request.form()
+    target_folder = str(form.get("target_folder", "INBOX")).strip() or "INBOX"
+    user = getattr(request.state, "user", None)
+    try:
+        result = mailops.restore_archived_message(message_id, target_folder=target_folder, user=user)
+        return RedirectResponse(
+            f"/accounts/{result['account_id']}?notice=Archive%20message%20restored%20to%20{quote(target_folder)}",
+            status_code=303,
+        )
+    except Exception as exc:
+        return RedirectResponse(f"/?notice=Archive%20restore%20failed:%20{quote(str(exc))}", status_code=303)
 
 
 @app.get("/api/accounts")
