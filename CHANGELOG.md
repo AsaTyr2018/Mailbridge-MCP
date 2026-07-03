@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+- Add `get_web_ui_link` MCP tool for returning the configured Mailbridge Web UI URL on user request.
+
 ## 0.4.0
 
 - Add non-blocking background sync jobs with progress and cancellation.

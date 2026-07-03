@@ -123,6 +123,7 @@ enabled = true
 ## MCP Tools
 
 - `list_accounts`
+- `get_web_ui_link`
 - `get_account_status`
 - `sync_account`
 - `start_sync_account`

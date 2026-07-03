@@ -44,6 +44,20 @@ def _message_account_id(message_id: int) -> int:
 
 
 @mcp.tool()
+def get_web_ui_link() -> dict[str, str]:
+    """Return the configured Mailbridge web UI link so the MCP client can show it to the user on request."""
+    user = get_mcp_user()
+    audit(actor_type="mcp_client", actor_id=str(user["id"] if user else "codex"), interface="mcp", action="get_web_ui_link", status="ok")
+    base_url = settings.public_url.rstrip("/")
+    return {
+        "web_ui_url": base_url,
+        "accounts_url": f"{base_url}/accounts",
+        "drafts_url": f"{base_url}/drafts",
+        "security_audit_url": f"{base_url}/security-audit",
+    }
+
+
+@mcp.tool()
 def list_accounts() -> list[dict[str, Any]]:
     """List configured accounts and their MCP permissions."""
     user = get_mcp_user()
